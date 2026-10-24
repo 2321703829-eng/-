@@ -539,13 +539,13 @@ def _extract_road_ids_from_user_input(user_input):
     return road_ids
 
 
-def _build_single_curve_context(curve_context_builder, road_id, user_input):
+def _build_single_curve_context(curve_context_builder, road_id, user_input, prepare_fit=True):
     try:
         geometry_index = curve_context_builder.select_geometry_index(
             str(road_id), user_input
         )
         control_points, curve_info = curve_context_builder._build_curve_context(
-            str(road_id), geometry_index
+            str(road_id), geometry_index, prepare_fit=prepare_fit
         )
         return curve_context_builder._build_curve_llm_context(
             control_points, curve_info
@@ -554,16 +554,20 @@ def _build_single_curve_context(curve_context_builder, road_id, user_input):
         return {"road_id": f"road_{road_id}", "error": str(exc)}
 
 
-def _build_real_single_agent_context(dispatcher, curve_context_builder):
+def _build_real_single_agent_context(dispatcher, curve_context_builder, curve_road_ids=None):
     previous_dispatcher_mode = agent_dispatcher_module.USE_MANUAL_ROAD_CONTEXT
     previous_context_mode = agent_road_context.use_manual_road_context()
     agent_dispatcher_module.USE_MANUAL_ROAD_CONTEXT = False
     agent_road_context.set_use_manual_road_context(False)
     try:
+        if curve_road_ids is not None:
+            from handler.handlerCurve import handlerC
+            for road_id in sorted(curve_road_ids):
+                handlerC.prepare_road_fit(str(road_id))
         roads = []
         for road_id in sorted(XParser.roads, key=lambda value: int(value)):
             curve_info = _build_single_curve_context(
-                curve_context_builder, road_id, ""
+                curve_context_builder, road_id, "", prepare_fit=curve_road_ids is None
             )
             if "error" in curve_info:
                 raise ValueError(
@@ -706,7 +710,7 @@ def run_real_trace(
         setup_paths(xodr_name, json_name=json_name)
 
     if request_cases is None:
-        request_cases = load_request_cases() if use_manual_context else {}
+        request_cases = load_request_cases() if use_manual_context or (aligned_real and agent_flow == "single") else {}
     if aligned_real and road_alignments is None:
         road_alignments = load_real_road_alignments()
     manager = None
@@ -777,15 +781,23 @@ def run_real_trace(
                         road_context_json=alignment,
                     )
                 if single_agent is not None:
-                    map_name = alignment["map_name"]
-                    if map_name not in single_context_by_map:
-                        single_context_by_map[map_name] = (
-                            _build_real_single_agent_context(
-                                single_context_dispatcher,
-                                single_curve_context_builder,
-                            )
+                    # Each task reloads its original map; never reuse a fitted
+                    # context from another scene or a different operation set.
+                    operator_types = _single_case_operator_types(user_input, request_cases)
+                    if operator_types:
+                        single_real_context = _build_real_single_agent_context(
+                            single_context_dispatcher,
+                            single_curve_context_builder,
+                            curve_road_ids={alignment["road_id"]} if "curve" in operator_types else set(),
                         )
-                    single_real_context = single_context_by_map[map_name]
+                    else:
+                        # Preserve the older ad-hoc API for inputs without test-case metadata.
+                        map_name = alignment["map_name"]
+                        if map_name not in single_context_by_map:
+                            single_context_by_map[map_name] = _build_real_single_agent_context(
+                                single_context_dispatcher, single_curve_context_builder,
+                            )
+                        single_real_context = single_context_by_map[map_name]
             if use_manual_context:
                 with agent_trace.trace_context(
                     task_id=task_id,

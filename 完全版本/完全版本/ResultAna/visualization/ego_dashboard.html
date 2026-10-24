@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EGO 轨迹合规分析</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas: oklch(95.7% 0.008 160);
+      --panel: oklch(99.2% 0.004 160);
+      --panel-soft: oklch(97.4% 0.007 160);
+      --ink: oklch(24% 0.025 160);
+      --muted: oklch(51% 0.018 160);
+      --line: oklch(87% 0.012 160);
+      --accent: oklch(45% 0.105 160);
+      --accent-soft: oklch(92% 0.035 160);
+      --crossing: oklch(59% 0.145 60);
+      --slide: oklch(50% 0.13 305);
+      --fall: oklch(52% 0.19 27);
+      --collision: oklch(49% 0.045 235);
+      --success: oklch(46% 0.11 151);
+      --r-sm: 7px;
+      --r-md: 10px;
+      --r-lg: 16px;
+      --shadow: 0 12px 34px rgba(28, 48, 39, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      overflow: hidden;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      font-variant-numeric: tabular-nums;
+    }
+
+    button, select, textarea { font: inherit; }
+    button, a { touch-action: manipulation; }
+    button:active, .back-link:active, .export-link:active { transform: scale(0.96); }
+    button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 3px solid color-mix(in oklch, var(--accent) 35%, transparent);
+      outline-offset: 2px;
+    }
+
+    .skip-link {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      z-index: 20;
+      padding: 8px 12px;
+      border-radius: var(--r-sm);
+      background: var(--ink);
+      color: white;
+      transform: translateY(-150%);
+    }
+
+    .skip-link:focus { transform: translateY(0); }
+
+    .app {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      height: 100vh;
+      padding: 12px;
+      gap: 10px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(230px, 1fr) minmax(560px, auto) auto;
+      align-items: center;
+      gap: 16px;
+      padding: 11px 14px;
+      border-radius: var(--r-lg);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .identity { min-width: 0; }
+    .eyebrow { margin: 0 0 2px; color: var(--accent); font-size: 10px; font-weight: 750; letter-spacing: 0.11em; text-transform: uppercase; }
+    h1 { margin: 0; font-size: clamp(17px, 2vw, 22px); line-height: 1.15; text-wrap: balance; }
+    .source { margin: 3px 0 0; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(72px, 1fr));
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: var(--r-md);
+      background: var(--panel-soft);
+    }
+    .metric {
+      min-width: 0;
+      padding: 7px 9px 8px;
+      text-align: left;
+    }
+    .metric + .metric { border-left: 1px solid var(--line); }
+    .metric-label {
+      display: block;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 680;
+      line-height: 1.25;
+      text-overflow: clip;
+      white-space: nowrap;
+    }
+    .metric-value {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+      margin-top: 4px;
+      font-size: 15px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .metric-separator { color: var(--line); font-weight: 500; }
+    .metric-percent { color: var(--accent); font-size: 10px; font-weight: 760; }
+
+    .actions { display: flex; align-items: center; gap: 7px; }
+    .back-link, .export-link {
+      display: inline-flex;
+      min-height: 40px;
+      align-items: center;
+      padding: 0 12px;
+      border-radius: var(--r-md);
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 680;
+      text-decoration: none;
+      transition: transform 120ms ease, background 120ms ease;
+    }
+    .back-link { background: var(--panel-soft); }
+    .export-link { background: var(--accent); color: white; }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 350px minmax(0, 1fr);
+      min-height: 0;
+      gap: 10px;
+    }
+
+    .sidebar {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      min-height: 0;
+      overflow: hidden;
+      border-radius: var(--r-lg);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .filter-block {
+      padding: 13px;
+      border-bottom: 1px solid var(--line);
+    }
+    .filter-block label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 10px; font-weight: 720; }
+    .filter-block select {
+      width: 100%;
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: var(--r-md);
+      background: var(--panel-soft);
+      color: var(--ink);
+      padding: 0 10px;
+    }
+
+    .run-list { overflow: auto; padding: 7px; overscroll-behavior: contain; }
+    .run-empty { padding: 24px 14px; color: var(--muted); font-size: 12px; line-height: 1.7; text-align: center; }
+    .run-row {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr);
+      width: 100%;
+      min-height: 58px;
+      gap: 9px;
+      padding: 9px;
+      border: 1px solid transparent;
+      border-radius: var(--r-md);
+      background: transparent;
+      color: var(--ink);
+      text-align: left;
+      cursor: pointer;
+      transition: transform 120ms ease, background 120ms ease;
+    }
+    .run-row + .run-row { margin-top: 3px; }
+    .run-row:hover { background: var(--panel-soft); }
+    .run-row[aria-pressed="true"] { border-color: var(--line); background: var(--accent-soft); }
+    .run-number { color: var(--muted); font-size: 11px; font-weight: 750; }
+    .run-name { display: block; overflow: hidden; font-size: 11px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
+    .run-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+
+    .tag {
+      display: inline-flex;
+      min-height: 19px;
+      align-items: center;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: var(--panel-soft);
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+    }
+    .tag.crossing { background: color-mix(in oklch, var(--crossing) 14%, white); color: var(--crossing); }
+    .tag.slide { background: color-mix(in oklch, var(--slide) 13%, white); color: var(--slide); }
+    .tag.fall { background: color-mix(in oklch, var(--fall) 12%, white); color: var(--fall); }
+    .tag.collision { background: color-mix(in oklch, var(--collision) 13%, white); color: var(--collision); }
+    .tag.clean { background: color-mix(in oklch, var(--success) 12%, white); color: var(--success); }
+
+    .review {
+      padding: 12px 13px 13px;
+      border-top: 1px solid var(--line);
+      background: var(--panel-soft);
+    }
+    .review[hidden] { display: none; }
+    .review h2 { margin: 0; font-size: 12px; }
+    .review p { margin: 4px 0 9px; color: var(--muted); font-size: 10px; line-height: 1.55; text-wrap: pretty; }
+    .review-controls { display: grid; grid-template-columns: 126px minmax(0, 1fr); gap: 7px; }
+    .review select, .review textarea {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--r-sm);
+      background: var(--panel);
+      color: var(--ink);
+      padding: 7px 8px;
+      font-size: 11px;
+    }
+    .review textarea { min-height: 66px; resize: vertical; line-height: 1.55; }
+    .review button {
+      grid-column: 1 / -1;
+      min-height: 40px;
+      border: 0;
+      border-radius: var(--r-md);
+      background: var(--collision);
+      color: white;
+      font-weight: 720;
+      cursor: pointer;
+    }
+    .review-status { min-height: 17px; margin-top: 6px; color: var(--muted); font-size: 10px; }
+
+    .map-panel {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      border-radius: var(--r-lg);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    #run-viewer { display: block; width: 100%; height: 100%; border: 0; }
+    .map-empty {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-content: center;
+      gap: 5px;
+      padding: 24px;
+      color: var(--muted);
+      text-align: center;
+    }
+    .map-empty strong { color: var(--ink); font-size: 15px; }
+    .map-empty[hidden] { display: none; }
+
+    @media (max-width: 1180px) {
+      .topbar { grid-template-columns: 1fr auto; }
+      .metrics { grid-column: 1 / -1; }
+    }
+
+    @media (max-width: 880px) {
+      body { overflow: auto; }
+      .app { height: auto; min-height: 100vh; }
+      .workspace { grid-template-columns: 1fr; grid-template-rows: auto minmax(620px, 72vh); }
+      .sidebar { max-height: 580px; }
+      .run-list { max-height: 270px; }
+    }
+
+    @media (max-width: 520px) {
+      .app { padding: 7px; gap: 7px; }
+      .topbar { display: block; }
+      .actions { margin-top: 10px; }
+      .metrics {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin-top: 10px;
+      }
+      .metric + .metric { border-left: 0; }
+      .metric:nth-child(even) { border-left: 1px solid var(--line); }
+      .metric:nth-child(n + 3) { border-top: 1px solid var(--line); }
+      .metric:last-child:nth-child(odd) { grid-column: 1 / -1; }
+      .workspace { gap: 7px; }
+      .review-controls { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到分析内容</a>
+  <main class="app" id="main-content">
+    <header class="topbar">
+      <div class="identity">
+        <p class="eyebrow">EGO compliance analysis</p>
+        <h1>EGO 轨迹合规分析</h1>
+        <p class="source" id="source-name">正在读取批次</p>
+      </div>
+      <div class="metrics" aria-label="批次统计，数量和占全部运行百分比">
+        <div class="metric">
+          <span class="metric-label">全部运行</span>
+          <strong class="metric-value"><span id="run-count">0</span><span class="metric-separator">/</span><span class="metric-percent" id="run-percent">0%</span></strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">异常运行</span>
+          <strong class="metric-value"><span id="violation-count">0</span><span class="metric-separator">/</span><span class="metric-percent" id="violation-percent">0%</span></strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">越线</span>
+          <strong class="metric-value"><span id="crossing-count">0</span><span class="metric-separator">/</span><span class="metric-percent" id="crossing-percent">0%</span></strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">滑坡</span>
+          <strong class="metric-value"><span id="slide-count">0</span><span class="metric-separator">/</span><span class="metric-percent" id="slide-percent">0%</span></strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">跌落</span>
+          <strong class="metric-value"><span id="fall-count">0</span><span class="metric-separator">/</span><span class="metric-percent" id="fall-percent">0%</span></strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">碰撞候选</span>
+          <strong class="metric-value"><span id="collision-count">0</span><span class="metric-separator">/</span><span class="metric-percent" id="collision-percent">0%</span></strong>
+        </div>
+        <div class="metric">
+          <span class="metric-label">车辆停滞</span>
+          <strong class="metric-value"><span id="stuck-count">0</span><span class="metric-separator">/</span><span class="metric-percent" id="stuck-percent">0%</span></strong>
+        </div>
+      </div>
+      <div class="actions">
+        <a class="back-link" href="/" target="_top">返回载入页</a>
+        <a class="export-link" id="export-link" href="#" aria-live="polite">导出到 D:\download</a>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <aside class="sidebar" aria-label="EGO 运行列表">
+        <div class="filter-block">
+          <label for="run-filter">筛选运行</label>
+          <select id="run-filter">
+            <option value="all">全部运行</option>
+            <option value="violation">包含异常</option>
+            <option value="crossing">左侧或右侧越线</option>
+            <option value="slide">纵向滑坡</option>
+            <option value="fall">跌出路面</option>
+            <option value="collision">碰撞候选</option>
+            <option value="unreviewed">碰撞待复核</option>
+            <option value="stuck">车辆停滞</option>
+          </select>
+        </div>
+        <div class="run-list" id="run-list"></div>
+        <section class="review" id="review-panel" hidden>
+          <h2>碰撞人工复核</h2>
+          <p>最后一个路径点仅作为疑似碰撞终点显示，碰撞对象和细节需要结合录像或日志人工判断。</p>
+          <div class="review-controls">
+            <select id="review-status" aria-label="碰撞复核状态">
+              <option value="unreviewed">未复核</option>
+              <option value="confirmed">确认碰撞</option>
+              <option value="dismissed">排除碰撞</option>
+            </select>
+            <textarea id="review-note" maxlength="2000" placeholder="记录人工判断依据"></textarea>
+            <button id="save-review" type="button">保存复核结果</button>
+          </div>
+          <div class="review-status" id="review-message" aria-live="polite"></div>
+        </section>
+      </aside>
+
+      <section class="map-panel" aria-label="选中运行的地图与 EGO 轨迹">
+        <iframe id="run-viewer" title="EGO 路径点与道路合规可视化"></iframe>
+        <div class="map-empty" id="map-empty">
+          <strong>选择一条仿真运行</strong>
+          <span>地图、轨迹点、越线方向和异常事件会显示在这里。</span>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script id="batch-id" type="application/json">__EGO_BATCH_ID__</script>
+  <script>
+    (() => {
+      "use strict";
+
+      const batchId = JSON.parse(document.getElementById("batch-id").textContent);
+      const runList = document.getElementById("run-list");
+      const runFilter = document.getElementById("run-filter");
+      const exportLink = document.getElementById("export-link");
+      const viewer = document.getElementById("run-viewer");
+      const empty = document.getElementById("map-empty");
+      const reviewPanel = document.getElementById("review-panel");
+      const reviewStatus = document.getElementById("review-status");
+      const reviewNote = document.getElementById("review-note");
+      const reviewMessage = document.getElementById("review-message");
+      const saveReview = document.getElementById("save-review");
+      let batch = null;
+      let selectedRunIndex = null;
+
+      const labels = {
+        left_line_crossing: "左侧越线",
+        right_line_crossing: "右侧越线",
+        longitudinal_slide: "纵向滑坡",
+        fall_off_road: "跌出路面",
+      };
+
+      async function request(path, options = {}) {
+        const response = await fetch(path, options);
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || `请求失败（${response.status}）`);
+        return body;
+      }
+
+      function hasCrossing(run) {
+        return run.eventTypes.includes("left_line_crossing") || run.eventTypes.includes("right_line_crossing");
+      }
+
+      function isVisible(run) {
+        const filter = runFilter.value;
+        if (filter === "all") return true;
+        if (filter === "violation") return run.eventTypes.length > 0 || run.collisionCandidate;
+        if (filter === "crossing") return hasCrossing(run);
+        if (filter === "slide") return run.eventTypes.includes("longitudinal_slide");
+        if (filter === "fall") return run.eventTypes.includes("fall_off_road");
+        if (filter === "collision") return run.collisionCandidate;
+        if (filter === "unreviewed") return run.collisionCandidate && run.collisionReview.status === "unreviewed";
+        if (filter === "stuck") return run.stuck;
+        return true;
+      }
+
+      function appendTag(container, text, kind) {
+        const tag = document.createElement("span");
+        tag.className = `tag ${kind}`.trim();
+        tag.textContent = text;
+        container.append(tag);
+      }
+
+      function renderRuns() {
+        runList.replaceChildren();
+        const visibleRuns = batch.runs.filter(isVisible);
+        if (!visibleRuns.length) {
+          const message = document.createElement("div");
+          message.className = "run-empty";
+          message.textContent = "当前筛选条件下没有运行记录。";
+          runList.append(message);
+          return;
+        }
+        visibleRuns.forEach((run) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "run-row";
+          button.setAttribute("aria-pressed", String(run.runIndex === selectedRunIndex));
+
+          const number = document.createElement("span");
+          number.className = "run-number";
+          number.textContent = `#${run.runIndex + 1}`;
+          const content = document.createElement("span");
+          const name = document.createElement("span");
+          name.className = "run-name";
+          name.textContent = run.jsonName;
+          name.title = run.jsonName;
+          const tags = document.createElement("span");
+          tags.className = "run-meta";
+          if (hasCrossing(run)) appendTag(tags, "越线", "crossing");
+          if (run.eventTypes.includes("longitudinal_slide")) appendTag(tags, "滑坡", "slide");
+          if (run.eventTypes.includes("fall_off_road")) appendTag(tags, "跌落", "fall");
+          if (run.collisionCandidate) {
+            const reviewText = run.collisionReview.status === "confirmed"
+              ? "碰撞已确认"
+              : run.collisionReview.status === "dismissed"
+                ? "碰撞已排除"
+                : "碰撞待复核";
+            appendTag(tags, reviewText, "collision");
+          }
+          if (run.stuck) appendTag(tags, "车辆停滞", "collision");
+          if (!tags.children.length) appendTag(tags, "未检出异常", "clean");
+          content.append(name, tags);
+          button.append(number, content);
+          button.addEventListener("click", () => selectRun(run.runIndex));
+          runList.append(button);
+        });
+      }
+
+      function selectRun(runIndex) {
+        selectedRunIndex = runIndex;
+        const run = batch.runs.find((item) => item.runIndex === runIndex);
+        viewer.src = `/ego-view/${encodeURIComponent(batchId)}/${runIndex}`;
+        empty.hidden = true;
+        reviewPanel.hidden = !run.collisionCandidate;
+        if (run.collisionCandidate) {
+          reviewStatus.value = run.collisionReview.status;
+          reviewNote.value = run.collisionReview.note;
+          reviewMessage.textContent = "";
+        }
+        renderRuns();
+      }
+
+      function renderSummary() {
+        const total = Number(batch.summary.runCount) || 0;
+        const setMetric = (name, value) => {
+          const count = Number(value) || 0;
+          const percentage = total > 0 ? (count / total) * 100 : 0;
+          document.getElementById(`${name}-count`).textContent = count;
+          document.getElementById(`${name}-percent`).textContent = `${percentage.toFixed(1)}%`;
+        };
+        document.getElementById("source-name").textContent = batch.sourceName;
+        setMetric("run", total);
+        setMetric("violation", batch.summary.violationRunCount);
+        setMetric("crossing", batch.summary.lineCrossingRunCount);
+        setMetric("slide", batch.summary.slideRunCount);
+        setMetric("fall", batch.summary.fallRunCount);
+        setMetric("collision", batch.summary.collisionCandidateCount);
+        setMetric("stuck", batch.summary.stuckRunCount);
+        exportLink.dataset.exportUrl = `/api/ego/${encodeURIComponent(batchId)}/export`;
+      }
+
+      async function loadBatch() {
+        batch = await request(`/api/ego/${encodeURIComponent(batchId)}`);
+        renderSummary();
+        renderRuns();
+        const preferred = batch.runs.find((run) => run.eventTypes.length || run.collisionCandidate) || batch.runs[0];
+        if (preferred) selectRun(preferred.runIndex);
+      }
+
+      runFilter.addEventListener("change", renderRuns);
+      exportLink.addEventListener("click", async (event) => {
+        event.preventDefault();
+        const exportUrl = exportLink.dataset.exportUrl;
+        if (!exportUrl || exportLink.dataset.busy === "true") return;
+        exportLink.dataset.busy = "true";
+        exportLink.textContent = "正在导出";
+        try {
+          const result = await request(exportUrl, { method: "POST" });
+          const savedPath = result.savedPath || "D:\\download";
+          exportLink.textContent = "已导出到 D:\\download";
+          exportLink.title = savedPath;
+        } catch (error) {
+          exportLink.textContent = "导出失败";
+          exportLink.title = error.message;
+        } finally {
+          delete exportLink.dataset.busy;
+          window.setTimeout(() => {
+            exportLink.textContent = "导出到 D:\\download";
+          }, 2400);
+        }
+      });
+      saveReview.addEventListener("click", async () => {
+        if (selectedRunIndex === null) return;
+        saveReview.disabled = true;
+        reviewMessage.textContent = "正在保存";
+        try {
+          await request(
+            `/api/ego/${encodeURIComponent(batchId)}/reviews/${selectedRunIndex}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ status: reviewStatus.value, note: reviewNote.value }),
+            },
+          );
+          batch = await request(`/api/ego/${encodeURIComponent(batchId)}`);
+          renderSummary();
+          renderRuns();
+          reviewMessage.textContent = "复核结果已保存，并会写入 Excel。";
+        } catch (error) {
+          reviewMessage.textContent = error.message;
+        } finally {
+          saveReview.disabled = false;
+        }
+      });
+
+      loadBatch().catch((error) => {
+        empty.querySelector("strong").textContent = "无法读取分析批次";
+        empty.querySelector("span").textContent = error.message;
+      });
+    })();
+  </script>
+</body>
+</html>

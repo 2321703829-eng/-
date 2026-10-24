@@ -16,7 +16,7 @@ class editorFit(editor):
         editor.__init__(self)
 
     # 输入参数：道路id号，最大误差比例([0,1]百分数)，采样途径点的间隔(米)
-    def edit(self, id, md, st):
+    def edit(self, id, md, st, plot=True):
         road = XParser.roads[id]
         planView = road.find("planView")
         gs = planView.findall("geometry")
@@ -70,10 +70,11 @@ class editorFit(editor):
             # 设置起点/终点弧度角
             if i == 0:
                 XParser.hdgs[id][0] = beziers[i][4]
-            elif i == len(beziers) - 1:
+            if i == len(beziers) - 1:
                 XParser.hdgs[id][1] = beziers[i][5]
 
-        showCurve(params)
+        if plot:
+            showCurve(params)
         self.rectifyRoadData(road, length)
         # 返回: 道路id和曲线段数
         return id, len(beziers)

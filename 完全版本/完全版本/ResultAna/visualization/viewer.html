@@ -1,0 +1,1778 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenDRIVE 场景轨迹查看器</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #eef2f0;
+      --panel: rgba(250, 252, 251, 0.94);
+      --panel-strong: #ffffff;
+      --ink: #17211d;
+      --muted: #607069;
+      --line: #d7dfdb;
+      --road: #7d8984;
+      --road-label: #3f4c47;
+      --road-surface: #b4bdb9;
+      --road-surface-alt: #c8cfcc;
+      --lane-boundary: #65716c;
+      --road-cap: #34413b;
+      --accent: #16634a;
+      --accent-soft: #dcebe4;
+      --candidate: #9b5c00;
+      --candidate-soft: #fff0cf;
+      --problem: #b42318;
+      --problem-soft: #fde7e4;
+      --crossing: #b86b00;
+      --slide: #7651a6;
+      --fall: #c52b1f;
+      --collision: #45657a;
+      --ego-start: #2563a5;
+      --ego-destination: #1f8a5b;
+      --stuck: #d97706;
+      --shadow: 0 18px 50px rgba(31, 49, 41, 0.12);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --page: #111816;
+        --panel: rgba(25, 34, 31, 0.94);
+        --panel-strong: #1d2824;
+        --ink: #edf5f1;
+        --muted: #a1b0aa;
+        --line: #35433e;
+        --road: #68766f;
+        --road-label: #c1cec8;
+        --road-surface: #34423c;
+        --road-surface-alt: #293630;
+        --lane-boundary: #a0b0a8;
+        --road-cap: #d5e1db;
+        --accent: #66c69f;
+        --accent-soft: #244739;
+        --candidate: #f2b84b;
+        --candidate-soft: #493916;
+        --problem: #ff8f83;
+        --problem-soft: #4d2825;
+        --crossing: #f2b84b;
+        --slide: #c4a0f5;
+        --fall: #ff7468;
+        --collision: #96bbd2;
+        --ego-start: #79b8ff;
+        --ego-destination: #66d19e;
+        --stuck: #f6b84a;
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 10% 10%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 28rem),
+        var(--page);
+      color: var(--ink);
+      font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    }
+
+    button { font: inherit; }
+
+    .app {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      height: 100vh;
+      padding: 14px;
+      gap: 12px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 13px 16px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+
+    .title-block { min-width: 0; }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(17px, 2vw, 23px);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .source-line {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .source-line span { overflow: hidden; text-overflow: ellipsis; }
+
+    .summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 0 0 auto;
+    }
+
+    .metric {
+      min-width: 72px;
+      padding: 7px 10px;
+      border-radius: 10px;
+      background: var(--accent-soft);
+      text-align: center;
+    }
+
+    .metric strong { display: block; font-size: 16px; line-height: 1.1; }
+    .metric span { color: var(--muted); font-size: 11px; }
+
+    .reset-button {
+      height: 44px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel-strong);
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    .reset-button:hover { border-color: var(--accent); }
+    .reset-button:focus-visible, .npc-row:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 42%, transparent); outline-offset: 2px; }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      min-height: 0;
+      gap: 12px;
+    }
+
+    .map-shell {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel-strong);
+      box-shadow: var(--shadow);
+    }
+
+    #map-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    #map-canvas.dragging { cursor: grabbing; }
+
+    .minimap {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 2;
+      width: 190px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: var(--panel);
+      box-shadow: 0 8px 26px rgba(31, 49, 41, 0.14);
+      opacity: 0;
+      visibility: hidden;
+      transform: translateY(-5px);
+      transition: opacity 140ms ease, transform 140ms ease, visibility 140ms;
+      pointer-events: none;
+      backdrop-filter: blur(8px);
+    }
+
+    .minimap.is-visible {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0);
+    }
+
+    .minimap span {
+      display: block;
+      margin: 0 0 5px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    #minimap-canvas {
+      display: block;
+      width: 100%;
+      height: 112px;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--panel-strong) 88%, var(--page));
+    }
+
+    .map-help, .map-legend {
+      position: absolute;
+      z-index: 2;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 11px;
+      backdrop-filter: blur(8px);
+    }
+
+    .map-help { left: 12px; bottom: 12px; padding: 7px 9px; pointer-events: none; }
+    .map-legend {
+      right: 12px;
+      bottom: 12px;
+      max-width: min(580px, calc(100% - 24px));
+      overflow: hidden;
+    }
+    .map-legend summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      min-height: 30px;
+      padding: 0 10px;
+      color: var(--ink);
+      font-weight: 700;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+    }
+    .map-legend summary::-webkit-details-marker { display: none; }
+    .map-legend summary::after {
+      content: "展开";
+      color: var(--accent);
+      font-size: 10px;
+      font-weight: 650;
+    }
+    .map-legend[open] summary {
+      border-bottom: 1px solid var(--line);
+    }
+    .map-legend[open] summary::after { content: "收起"; }
+    .legend-content { padding: 8px 10px; }
+
+    .lane-tooltip {
+      position: absolute;
+      z-index: 3;
+      min-width: 150px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      color: var(--ink);
+      font-size: 11px;
+      line-height: 1.45;
+      pointer-events: none;
+      backdrop-filter: blur(8px);
+    }
+
+    .lane-tooltip[hidden] { display: none; }
+    .lane-tooltip strong, .lane-tooltip span { display: block; }
+    .lane-tooltip span { margin-top: 2px; color: var(--muted); }
+
+    .legend-line { display: flex; align-items: center; gap: 7px; }
+    .ego-only { display: none; }
+    body.ego-mode .ego-only { display: flex; }
+    .legend-line + .legend-line { margin-top: 5px; }
+    .legend-swatch { width: 22px; height: 3px; border-radius: 3px; background: var(--road); }
+    .legend-swatch.lane { height: 8px; border: 1px solid var(--lane-boundary); background: var(--road-surface); }
+    .legend-swatch.cap { width: 3px; height: 13px; border-radius: 0; background: var(--road-cap); }
+    .legend-swatch.path { position: relative; background: var(--accent); height: 4px; }
+    .legend-swatch.path::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: 1px;
+      width: 7px;
+      height: 7px;
+      border: 2px solid var(--accent);
+      border-radius: 50%;
+      background: var(--accent);
+      transform: translate(50%, -50%);
+    }
+    .legend-swatch.path.candidate {
+      height: 0;
+      border-top: 3px dashed var(--candidate);
+      border-radius: 0;
+      background: none;
+    }
+    .legend-swatch.path.candidate::after { border-color: var(--candidate); background: var(--panel-strong); }
+    .legend-swatch.path.problem {
+      height: 0;
+      border-top: 3px dotted var(--problem);
+      border-radius: 0;
+      background: none;
+    }
+    .legend-swatch.path.problem::after {
+      content: "×";
+      top: -1px;
+      right: -4px;
+      width: auto;
+      height: auto;
+      border: 0;
+      background: none;
+      color: var(--problem);
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1;
+    }
+    .legend-swatch.path.crossing { background: var(--crossing); }
+    .legend-swatch.path.crossing::after { border-color: var(--crossing); background: var(--crossing); }
+    .legend-swatch.path.slide { background: var(--slide); }
+    .legend-swatch.path.slide::after { border-color: var(--slide); background: var(--slide); }
+    .legend-swatch.path.fall { background: var(--fall); }
+    .legend-swatch.path.fall::after { border-color: var(--fall); background: var(--fall); }
+    .legend-swatch.path.collision { background: var(--collision); }
+    .legend-swatch.path.collision::after { border-color: var(--collision); background: var(--panel-strong); }
+    .legend-swatch.landmark {
+      position: relative;
+      width: 13px;
+      height: 13px;
+      margin: 0 5px;
+      border: 2px solid var(--landmark-color);
+      border-radius: 50%;
+      background: var(--panel-strong);
+    }
+    .legend-swatch.landmark::after {
+      content: "";
+      position: absolute;
+      inset: 3px;
+      border-radius: 50%;
+      background: var(--landmark-color);
+    }
+    .legend-swatch.landmark.start { --landmark-color: var(--ego-start); }
+    .legend-swatch.landmark.destination { --landmark-color: var(--ego-destination); }
+    .legend-swatch.landmark.stuck { --landmark-color: var(--stuck); }
+
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+
+    .sidebar-header {
+      padding: 15px 16px 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .sidebar-header h2 { margin: 0; font-size: 15px; }
+    .sidebar-header p { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+    .npc-list {
+      flex: 1;
+      overflow: auto;
+      padding: 9px;
+    }
+
+    .npc-row {
+      display: grid;
+      grid-template-columns: 12px minmax(0, 1fr);
+      width: 100%;
+      gap: 9px;
+      padding: 10px;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      background: transparent;
+      color: var(--ink);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .npc-row + .npc-row { margin-top: 5px; }
+    .npc-row:hover { background: color-mix(in srgb, var(--accent-soft) 55%, transparent); }
+    .npc-row[aria-pressed="true"] { border-color: var(--line); background: var(--panel-strong); }
+
+    .npc-color {
+      width: 10px;
+      height: 10px;
+      margin-top: 4px;
+      border-radius: 50%;
+      background: var(--npc-color);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--npc-color) 20%, transparent);
+    }
+
+    .npc-name-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .npc-name { font-weight: 650; font-size: 13px; }
+    .npc-count { color: var(--muted); font-size: 11px; }
+    .road-list { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+
+    .road-group { display: block; }
+    .road-group + .road-group { margin-top: 3px; }
+
+    .road-kind {
+      display: inline-block;
+      margin-right: 5px;
+      padding: 1px 5px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 10px;
+    }
+
+    .road-kind.candidate { background: var(--candidate-soft); color: var(--candidate); }
+    .road-kind.problem { background: var(--problem-soft); color: var(--problem); }
+
+    .selected-detail {
+      max-height: 48%;
+      overflow: auto;
+      padding: 13px 16px 15px;
+      border-top: 1px solid var(--line);
+      background: var(--panel-strong);
+    }
+
+    .selected-detail h3 { margin: 0; font-size: 13px; }
+    .selected-detail p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+    .ego-route-summary {
+      margin-top: 9px;
+      padding: 8px 9px;
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--ego-destination);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--ego-destination) 8%, var(--panel-strong));
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+    .ego-route-summary strong { color: var(--ink); }
+    .ego-route-summary.stuck { border-left-color: var(--stuck); }
+    .ego-landmark-coordinates { display: grid; gap: 3px; margin-top: 6px; }
+    .ego-landmark-coordinate { display: flex; align-items: center; gap: 6px; }
+    .ego-landmark-coordinate::before {
+      content: "";
+      flex: 0 0 auto;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--landmark-color);
+    }
+
+    .point-list {
+      display: grid;
+      gap: 4px;
+      margin: 10px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .point-row {
+      --point-color: var(--accent);
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr);
+      align-items: center;
+      gap: 7px;
+      padding: 6px 7px;
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--point-color);
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--point-color) 11%, var(--panel-strong));
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+    body.ego-mode .point-row { grid-template-columns: 58px minmax(0, 1fr); }
+
+    .point-index { color: var(--point-color); font-weight: 750; font-variant-numeric: tabular-nums; }
+    .point-owner strong { color: var(--ink); font-weight: 650; }
+
+    @media (max-width: 800px) {
+      body { overflow: auto; }
+      .app { height: auto; min-height: 100vh; }
+      .topbar { align-items: flex-start; }
+      .summary { flex-wrap: wrap; justify-content: flex-end; }
+      .metric { min-width: 60px; }
+      .workspace { grid-template-columns: 1fr; grid-template-rows: minmax(58vh, 560px) auto; }
+      .sidebar { max-height: 460px; }
+    }
+
+    @media (max-width: 540px) {
+      .app { padding: 8px; gap: 8px; }
+      .topbar { display: block; }
+      .summary { justify-content: flex-start; margin-top: 12px; }
+      .source-line { white-space: normal; }
+      .source-line span { overflow: visible; }
+      .workspace { gap: 8px; grid-template-rows: minmax(62vh, 440px) auto; }
+      .map-legend { display: none; }
+      .minimap { width: 145px; }
+      #minimap-canvas { height: 92px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="title-block">
+        <h1 id="map-title">OpenDRIVE 场景轨迹</h1>
+        <div class="source-line">
+          <span id="map-file"></span>
+          <span aria-hidden="true">·</span>
+          <span id="scenario-file"></span>
+        </div>
+      </div>
+      <div class="summary" aria-label="场景统计">
+        <div class="metric"><strong id="road-count">0</strong><span>道路</span></div>
+        <div class="metric"><strong id="npc-count">0</strong><span id="agent-count-label">NPC</span></div>
+        <div class="metric"><strong id="point-count">0</strong><span>路径点</span></div>
+        <button class="reset-button" id="reset-view" type="button">复位视图</button>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <div class="map-shell" id="map-shell">
+        <canvas id="map-canvas" aria-label="OpenDRIVE 地图及 NPC 路径"></canvas>
+        <div class="minimap" id="minimap">
+          <span>道路鸟瞰图</span>
+          <canvas id="minimap-canvas" aria-label="道路鸟瞰图"></canvas>
+        </div>
+        <div class="lane-tooltip" id="lane-tooltip" role="status" hidden>
+          <strong id="lane-tooltip-title"></strong>
+          <span id="lane-tooltip-detail"></span>
+        </div>
+        <div class="map-help" id="map-help">滚轮缩放 · 拖动画布 · 选择 NPC 后悬停路径点查看归属 · 悬停车道查看 ID 和宽度</div>
+        <details class="map-legend" id="map-legend">
+          <summary>地图图例</summary>
+          <div class="legend-content">
+            <div class="legend-line"><span class="legend-swatch lane"></span><span>半透明道路面与清晰边界</span></div>
+            <div class="legend-line"><span class="legend-swatch cap"></span><span>道路首尾分界线</span></div>
+            <div class="legend-line"><span class="legend-swatch"></span><span>道路参考线与方向</span></div>
+            <div class="legend-line"><span class="legend-swatch path"></span><span>总览仅显示 NPC 路线；选择 NPC 后显示路径点与行驶方向，路径方向箭头随缩放增强；实线 / 实心：确定归属</span></div>
+            <div class="legend-line"><span class="legend-swatch path candidate"></span><span>虚线 / 空心：候选归属</span></div>
+            <div class="legend-line"><span class="legend-swatch path problem"></span><span>点线 / ×：未匹配或拓扑不一致</span></div>
+            <div class="legend-line ego-only"><span class="legend-swatch path crossing"></span><span>橙色：左侧或右侧越线</span></div>
+            <div class="legend-line ego-only"><span class="legend-swatch path slide"></span><span>紫色：纵向滑坡</span></div>
+            <div class="legend-line ego-only"><span class="legend-swatch path fall"></span><span>红色：跌出路面</span></div>
+            <div class="legend-line ego-only"><span class="legend-swatch path collision"></span><span>蓝灰色：疑似碰撞终点，需人工复核</span></div>
+            <div class="legend-line ego-only"><span class="legend-swatch landmark start"></span><span>蓝色圆环：场景配置起点</span></div>
+            <div class="legend-line ego-only"><span class="legend-swatch landmark destination"></span><span>绿色靶心：目标终点</span></div>
+            <div class="legend-line ego-only"><span class="legend-swatch landmark stuck"></span><span>橙色暂停：停滞时最后记录点；虚线连接目标终点</span></div>
+          </div>
+        </details>
+      </div>
+
+      <aside class="sidebar" aria-label="NPC 道路汇总">
+        <div class="sidebar-header">
+          <h2 id="agent-list-title">NPC 行驶道路</h2>
+          <p id="agent-list-copy">总览仅绘制整体路线；选择 NPC 后显示其路径点、行驶方向和道路归属。</p>
+        </div>
+        <div class="npc-list" id="npc-list"></div>
+        <div class="selected-detail" id="selected-detail"></div>
+      </aside>
+    </section>
+  </main>
+
+  <script id="visualization-data" type="application/json">__VISUALIZATION_DATA__</script>
+  <script>
+    (() => {
+      "use strict";
+
+      const data = JSON.parse(document.getElementById("visualization-data").textContent);
+      const isEgo = data.analysisMode === "ego";
+      if (isEgo) document.body.classList.add("ego-mode");
+      const canvas = document.getElementById("map-canvas");
+      const shell = document.getElementById("map-shell");
+      const context = canvas.getContext("2d");
+      const minimap = document.getElementById("minimap");
+      const minimapCanvas = document.getElementById("minimap-canvas");
+      const minimapContext = minimapCanvas.getContext("2d");
+      const npcList = document.getElementById("npc-list");
+      const selectedDetail = document.getElementById("selected-detail");
+      const mapLegend = document.getElementById("map-legend");
+      const laneTooltip = document.getElementById("lane-tooltip");
+      const laneTooltipTitle = document.getElementById("lane-tooltip-title");
+      const laneTooltipDetail = document.getElementById("lane-tooltip-detail");
+      const legendStateKey = "resultana-map-legend-open";
+      try {
+        mapLegend.open = window.localStorage.getItem(legendStateKey) === "true";
+      } catch {}
+      mapLegend.addEventListener("toggle", () => {
+        try {
+          window.localStorage.setItem(legendStateKey, String(mapLegend.open));
+        } catch {}
+      });
+      const state = {
+        scale: 1,
+        offsetX: 0,
+        offsetY: 0,
+        selectedNpc: isEgo && data.npcs.length === 1 ? 0 : null,
+        dragging: false,
+        lastX: 0,
+        lastY: 0,
+      };
+      let baseView = { scale: 1, offsetX: 0, offsetY: 0 };
+      const styleNames = [
+        "--road-surface", "--road-surface-alt", "--lane-boundary", "--road-cap",
+        "--panel", "--panel-strong", "--road-label", "--line", "--road",
+         "--problem", "--candidate", "--accent", "--ink",
+         "--crossing", "--slide", "--fall", "--collision",
+         "--ego-start", "--ego-destination", "--stuck",
+      ];
+      const palette = new Map();
+      let styleRevision = 0;
+
+      document.getElementById("map-title").textContent = data.mapName || (isEgo ? "EGO 轨迹合规分析" : "OpenDRIVE 场景轨迹");
+      document.getElementById("map-file").textContent = data.mapFile;
+      document.getElementById("scenario-file").textContent = data.scenarioFile;
+      document.getElementById("road-count").textContent = data.summary.roadCount;
+      document.getElementById("npc-count").textContent = data.summary.npcCount;
+      document.getElementById("point-count").textContent = data.summary.waypointCount;
+      if (isEgo) {
+        document.getElementById("agent-count-label").textContent = "EGO";
+        document.getElementById("agent-list-title").textContent = "EGO 道路与合规点";
+        document.getElementById("agent-list-copy").textContent = "选择 EGO 后显示配置起终点、全部路径点、实际行驶方向、左右边界距离和违规类型。";
+        document.getElementById("map-help").textContent = "滚轮缩放 · 拖动画布 · 查看 EGO 配置起终点和轨迹 · 悬停路径点查看合规证据";
+      }
+
+      function refreshPalette() {
+        const styles = getComputedStyle(document.documentElement);
+        styleNames.forEach((name) => palette.set(name, styles.getPropertyValue(name).trim()));
+        styleRevision += 1;
+      }
+
+      function css(name) {
+        return palette.get(name) || "";
+      }
+
+      function expandBounds(bounds, points) {
+        points.forEach((point) => {
+          bounds.minX = Math.min(bounds.minX, point.x);
+          bounds.maxX = Math.max(bounds.maxX, point.x);
+          bounds.minY = Math.min(bounds.minY, point.y);
+          bounds.maxY = Math.max(bounds.maxY, point.y);
+        });
+      }
+
+      function boundsForPoints(points) {
+        const bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+        expandBounds(bounds, points);
+        return Number.isFinite(bounds.minX) ? bounds : { minX: -1, maxX: 1, minY: -1, maxY: 1 };
+      }
+
+      function egoLandmarkPoints(npc) {
+        if (!isEgo || npc !== data.npcs[0]) return [];
+        return [data.egoStart, data.egoDestination].filter(
+          (point) => point && Number.isFinite(point.x) && Number.isFinite(point.y),
+        );
+      }
+
+      function calculateWorldBounds() {
+        const bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+        data.roads.forEach((road) => {
+          expandBounds(bounds, road.points);
+          (road.lanes || []).forEach((lane) => {
+            expandBounds(bounds, lane.innerPoints);
+            expandBounds(bounds, lane.outerPoints);
+          });
+        });
+        data.npcs.forEach((npc) => {
+          expandBounds(bounds, npc.points);
+          expandBounds(bounds, egoLandmarkPoints(npc));
+        });
+        return Number.isFinite(bounds.minX) ? bounds : { minX: -1, maxX: 1, minY: -1, maxY: 1 };
+      }
+
+      refreshPalette();
+      const cachedWorldBounds = calculateWorldBounds();
+      const cachedNpcBounds = new Map(
+        data.npcs.map((npc) => [
+          npc,
+          boundsForPoints([...npc.points, ...egoLandmarkPoints(npc)]),
+        ]),
+      );
+
+      function worldBounds() {
+        return cachedWorldBounds;
+      }
+
+      function fitView() {
+        const bounds = worldBounds();
+        const padding = 52;
+        const width = Math.max(bounds.maxX - bounds.minX, 1);
+        const height = Math.max(bounds.maxY - bounds.minY, 1);
+        const scale = Math.min((canvas.clientWidth - padding * 2) / width, (canvas.clientHeight - padding * 2) / height);
+        baseView = {
+          scale: Math.max(scale, 0.01),
+          offsetX: canvas.clientWidth / 2 - ((bounds.minX + bounds.maxX) / 2) * scale,
+          offsetY: canvas.clientHeight / 2 + ((bounds.minY + bounds.maxY) / 2) * scale,
+        };
+        Object.assign(state, baseView);
+      }
+
+      function fitNpcView(npc) {
+        const bounds = cachedNpcBounds.get(npc);
+        const padding = 64;
+        const width = Math.max(bounds.maxX - bounds.minX, 1);
+        const height = Math.max(bounds.maxY - bounds.minY, 1);
+        const scale = Math.min(
+          Math.max(canvas.clientWidth - padding * 2, 1) / width,
+          Math.max(canvas.clientHeight - padding * 2, 1) / height,
+        );
+        state.scale = Math.min(
+          Math.max(scale, baseView.scale),
+          baseView.scale * 80,
+        );
+        state.offsetX = canvas.clientWidth / 2 - ((bounds.minX + bounds.maxX) / 2) * state.scale;
+        state.offsetY = canvas.clientHeight / 2 + ((bounds.minY + bounds.maxY) / 2) * state.scale;
+      }
+
+      function screenPoint(point) {
+        return { x: point.x * state.scale + state.offsetX, y: -point.y * state.scale + state.offsetY };
+      }
+
+      function drawPolyline(points) {
+        if (!points.length) return;
+        const start = screenPoint(points[0]);
+        context.beginPath();
+        context.moveTo(start.x, start.y);
+        for (let index = 1; index < points.length; index += 1) {
+          const point = screenPoint(points[index]);
+          context.lineTo(point.x, point.y);
+        }
+        context.stroke();
+      }
+
+      function drawPolygon(points) {
+        if (points.length < 3) return;
+        const start = screenPoint(points[0]);
+        context.beginPath();
+        context.moveTo(start.x, start.y);
+        for (let index = 1; index < points.length; index += 1) {
+          const point = screenPoint(points[index]);
+          context.lineTo(point.x, point.y);
+        }
+        context.closePath();
+        context.fill();
+      }
+
+      function drawLaneSurface(lane) {
+        const polygon = [...lane.innerPoints, ...[...lane.outerPoints].reverse()];
+        context.save();
+        context.globalAlpha = 0.68;
+        context.fillStyle = lane.type === "driving" ? css("--road-surface") : css("--road-surface-alt");
+        drawPolygon(polygon);
+        context.restore();
+      }
+
+      function drawLaneBoundaries(lane) {
+        context.strokeStyle = css("--lane-boundary");
+        context.lineWidth = 1.45;
+        context.setLineDash([]);
+        drawPolyline(lane.innerPoints);
+        drawPolyline(lane.outerPoints);
+      }
+
+      function drawRoadCaps(road) {
+        context.save();
+        context.strokeStyle = css("--road-cap");
+        context.lineWidth = 2.4;
+        context.lineCap = "butt";
+        context.setLineDash([]);
+        drawPolyline(road.startCap || []);
+        drawPolyline(road.endCap || []);
+        context.restore();
+      }
+
+      function drawLaneLabels(road) {
+        if (state.scale < baseView.scale * 2.5) return;
+        (road.lanes || []).forEach((lane) => {
+          if (!lane.centerPoints.length || !lane.widths.length) return;
+          const index = Math.floor(lane.centerPoints.length / 2);
+          const point = screenPoint(lane.centerPoints[index]);
+          const text = Number.isFinite(lane.averageWidth)
+            ? `L${lane.id} · 平均 ${lane.averageWidth.toFixed(4)} m`
+            : `L${lane.id} · 平均宽度需重新载入`;
+          context.font = "600 10px Segoe UI, Microsoft YaHei UI, sans-serif";
+          const width = context.measureText(text).width + 8;
+          context.fillStyle = css("--panel");
+          context.fillRect(point.x - width / 2, point.y - 8, width, 16);
+          context.fillStyle = css("--road-label");
+          context.textAlign = "center";
+          context.textBaseline = "middle";
+          context.fillText(text, point.x, point.y);
+        });
+      }
+
+      function drawArrow(road) {
+        if (road.points.length < 2) return;
+        const centerIndex = Math.max(1, Math.floor(road.points.length / 2));
+        const before = screenPoint(road.points[centerIndex - 1]);
+        const after = screenPoint(road.points[centerIndex]);
+        const angle = Math.atan2(after.y - before.y, after.x - before.x);
+        const size = 7;
+        context.beginPath();
+        context.moveTo(after.x, after.y);
+        context.lineTo(after.x - size * Math.cos(angle - Math.PI / 6), after.y - size * Math.sin(angle - Math.PI / 6));
+        context.moveTo(after.x, after.y);
+        context.lineTo(after.x - size * Math.cos(angle + Math.PI / 6), after.y - size * Math.sin(angle + Math.PI / 6));
+        context.stroke();
+      }
+
+      function rectanglesOverlap(first, second) {
+        const gap = 3;
+        return !(
+          first.left + first.width + gap <= second.left
+          || second.left + second.width + gap <= first.left
+          || first.top + first.height + gap <= second.top
+          || second.top + second.height + gap <= first.top
+        );
+      }
+
+      function drawRoadLabel(road, occupiedLabels) {
+        if (!road.points.length) return;
+        const point = screenPoint(road.points[Math.floor(road.points.length / 2)]);
+        const text = `R${road.id}`;
+        context.font = "700 14px Segoe UI, Microsoft YaHei UI, sans-serif";
+        const width = context.measureText(text).width + 12;
+        const height = 22;
+        const candidates = [
+          { left: point.x - width / 2, top: point.y - height - 7 },
+          { left: point.x - width / 2, top: point.y + 7 },
+          { left: point.x - width - 7, top: point.y - height / 2 },
+          { left: point.x + 7, top: point.y - height / 2 },
+          { left: point.x - width - 7, top: point.y - height - 7 },
+          { left: point.x + 7, top: point.y - height - 7 },
+          { left: point.x - width - 7, top: point.y + 7 },
+          { left: point.x + 7, top: point.y + 7 },
+        ].map((candidate) => ({ ...candidate, width, height }));
+        const insideCanvas = (candidate) => (
+          candidate.left >= 4
+          && candidate.top >= 4
+          && candidate.left + candidate.width <= canvas.clientWidth - 4
+          && candidate.top + candidate.height <= canvas.clientHeight - 4
+        );
+        const label = candidates.find((candidate) => (
+          insideCanvas(candidate)
+          && occupiedLabels.every((occupied) => !rectanglesOverlap(candidate, occupied))
+        )) || candidates.find(insideCanvas) || candidates[0];
+        occupiedLabels.push(label);
+        context.fillStyle = css("--panel-strong");
+        context.fillRect(label.left, label.top, width, height);
+        context.strokeStyle = css("--line");
+        context.lineWidth = 1;
+        context.strokeRect(label.left + 0.5, label.top + 0.5, width - 1, height - 1);
+        context.fillStyle = css("--road-label");
+        context.textAlign = "center";
+        context.textBaseline = "middle";
+        context.fillText(text, label.left + width / 2, label.top + height / 2);
+      }
+
+      function drawRoads() {
+        context.lineCap = "round";
+        context.lineJoin = "round";
+        data.roads.forEach((road) => {
+          (road.lanes || []).forEach(drawLaneSurface);
+        });
+        data.roads.forEach((road) => {
+          (road.lanes || []).forEach(drawLaneBoundaries);
+        });
+        data.roads.forEach(drawRoadCaps);
+        data.roads.forEach((road) => {
+          context.strokeStyle = css("--road");
+          context.lineWidth = 1.4;
+          context.setLineDash([]);
+          drawPolyline(road.points);
+          drawArrow(road);
+        });
+
+        const occupiedLabels = [];
+        data.roads.forEach((road) => {
+          drawRoadLabel(road, occupiedLabels);
+          drawLaneLabels(road);
+        });
+      }
+
+      function laneTypeLabel(type) {
+        if (type === "driving") return "行驶车道";
+        if (type === "shoulder") return "路肩";
+        if (type === "sidewalk") return "人行道";
+        return type || "车道";
+      }
+
+      function nearestLane(pointerX, pointerY) {
+        let best = null;
+        data.roads.forEach((road) => {
+          (road.lanes || []).forEach((lane) => {
+            for (let index = 1; index < lane.centerPoints.length; index += 1) {
+              const start = screenPoint(lane.centerPoints[index - 1]);
+              const end = screenPoint(lane.centerPoints[index]);
+              const deltaX = end.x - start.x;
+              const deltaY = end.y - start.y;
+              const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+              const ratio = lengthSquared
+                ? Math.min(1, Math.max(0, ((pointerX - start.x) * deltaX + (pointerY - start.y) * deltaY) / lengthSquared))
+                : 0;
+              const closestX = start.x + ratio * deltaX;
+              const closestY = start.y + ratio * deltaY;
+              const distance = Math.hypot(pointerX - closestX, pointerY - closestY);
+              if (best === null || distance < best.distance) {
+                const startWidth = lane.widths[index - 1] ?? 0;
+                const endWidth = lane.widths[index] ?? startWidth;
+                best = {
+                  distance,
+                  road,
+                  lane,
+                  width: startWidth + (endWidth - startWidth) * ratio,
+                };
+              }
+            }
+          });
+        });
+        return best && best.distance <= 14 ? best : null;
+      }
+
+      function updateLaneTooltip(pointerX, pointerY) {
+        const pointMatch = nearestNpcPoint(pointerX, pointerY);
+        if (pointMatch) {
+          const pointName = pointMatch.pointIndex === 0
+            ? "初始位置"
+            : `路径点 ${pointMatch.pointIndex}`;
+          laneTooltipTitle.textContent = `${pointMatch.npc.label} · ${pointName}`;
+          laneTooltipDetail.textContent = pointStatusText(pointMatch.point)
+            + (Number.isFinite(pointMatch.point.speed) ? ` · 速度 ${pointMatch.point.speed.toFixed(1)}` : "");
+          positionTooltip(pointerX, pointerY);
+          return;
+        }
+        const match = nearestLane(pointerX, pointerY);
+        if (!match) {
+          laneTooltip.hidden = true;
+          return;
+        }
+        laneTooltipTitle.textContent = `道路 ${match.road.id} · 车道 ${match.lane.id}`;
+        laneTooltipDetail.textContent = `${laneTypeLabel(match.lane.type)} · 当前宽度 ${match.width.toFixed(2)} m`;
+        positionTooltip(pointerX, pointerY);
+      }
+
+      let tooltipFrame = null;
+      let pendingTooltipPosition = null;
+
+      function scheduleLaneTooltip(event) {
+        pendingTooltipPosition = { clientX: event.clientX, clientY: event.clientY };
+        if (tooltipFrame !== null) return;
+        tooltipFrame = requestAnimationFrame(() => {
+          tooltipFrame = null;
+          if (state.dragging || pendingTooltipPosition === null) return;
+          const position = pendingTooltipPosition;
+          pendingTooltipPosition = null;
+          const bounds = canvas.getBoundingClientRect();
+          updateLaneTooltip(position.clientX - bounds.left, position.clientY - bounds.top);
+        });
+      }
+
+      function positionTooltip(pointerX, pointerY) {
+        laneTooltip.hidden = false;
+        const left = Math.min(pointerX + 12, shell.clientWidth - laneTooltip.offsetWidth - 8);
+        const top = Math.min(pointerY + 12, shell.clientHeight - laneTooltip.offsetHeight - 8);
+        laneTooltip.style.left = `${Math.max(8, left)}px`;
+        laneTooltip.style.top = `${Math.max(8, top)}px`;
+      }
+
+      function pointKind(point) {
+        if (point.resolution === "direct" || point.resolution === "propagated" || point.resolution === "ranked") return "resolved";
+        if (point.resolution === "ambiguous") return "candidate";
+        return "problem";
+      }
+
+      function pointViolationKind(point) {
+        const types = point.violationTypes || [];
+        if (types.includes("fall_off_road")) return "fall";
+        if (types.includes("collision_candidate")) return "collision";
+        if (types.includes("longitudinal_slide")) return "slide";
+        if (types.includes("left_line_crossing") || types.includes("right_line_crossing")) return "crossing";
+        return null;
+      }
+
+      function routeKind(point) {
+        return pointViolationKind(point) || pointKind(point);
+      }
+
+      function classificationColor(kind, fallback) {
+        return kind === "resolved" ? fallback : css(`--${kind}`);
+      }
+
+      function pointDisplayColor(point, fallback) {
+        return classificationColor(routeKind(point), fallback);
+      }
+
+      function violationText(point) {
+        const labels = {
+          left_line_crossing: "左侧越线",
+          right_line_crossing: "右侧越线",
+          longitudinal_slide: "纵向滑坡",
+          fall_off_road: "跌出路面",
+          collision_candidate: "疑似碰撞终点",
+        };
+        return (point.violationTypes || []).map((type) => labels[type]).filter(Boolean).join(" / ");
+      }
+
+      function pointRoadText(point) {
+        return point.roadIds.length
+          ? point.roadIds.map((roadId) => `R${roadId}`).join(" / ")
+          : "无道路";
+      }
+
+      function pointStatusText(point) {
+        let status = "未匹配到道路";
+        if (point.resolution === "direct") status = `确定道路 ${pointRoadText(point)}（唯一定位）`;
+        else if (point.resolution === "propagated") status = `确定道路 ${pointRoadText(point)}（轨迹反推）`;
+        else if (point.resolution === "ranked") status = `确定道路 ${pointRoadText(point)}（最高可信候选）`;
+        else if (point.resolution === "ambiguous") status = `候选道路 ${pointRoadText(point)}`;
+        else if (point.resolution === "inconsistent") status = `拓扑不一致 · 原始候选 ${pointRoadText(point)}`;
+        const evidence = violationText(point);
+        if (evidence) status += ` · ${evidence}`;
+        if (point.laneChange) status += " · 变道过程（越线豁免）";
+        if (isEgo && Number.isFinite(point.leftClearance) && Number.isFinite(point.rightClearance)) {
+          status += ` · 左距 ${point.leftClearance.toFixed(2)} m · 右距 ${point.rightClearance.toFixed(2)} m`;
+        }
+        return status;
+      }
+
+      function worldPath(points) {
+        const path = new Path2D();
+        if (!points.length) return path;
+        path.moveTo(points[0].x, points[0].y);
+        for (let index = 1; index < points.length; index += 1) {
+          path.lineTo(points[index].x, points[index].y);
+        }
+        return path;
+      }
+
+      function buildNpcRouteRuns(npc) {
+        if (npc.points.length < 2) return [];
+        const runs = [];
+        let kind = routeKind(npc.points[1]);
+        let points = [npc.points[0], npc.points[1]];
+        for (let index = 2; index < npc.points.length; index += 1) {
+          const nextKind = routeKind(npc.points[index]);
+          if (nextKind === kind) {
+            points.push(npc.points[index]);
+            continue;
+          }
+          runs.push({ kind, path: worldPath(points) });
+          kind = nextKind;
+          points = [npc.points[index - 1], npc.points[index]];
+        }
+        runs.push({ kind, path: worldPath(points) });
+        return runs;
+      }
+
+      const cachedNpcRouteRuns = data.npcs.map(buildNpcRouteRuns);
+
+      function nearestNpcPoint(pointerX, pointerY) {
+        if (state.selectedNpc === null) return null;
+        let best = null;
+        const npcIndex = state.selectedNpc;
+        const npc = data.npcs[npcIndex];
+        npc.points.forEach((point, pointIndex) => {
+          const position = screenPoint(point);
+          const distance = Math.hypot(pointerX - position.x, pointerY - position.y);
+          if (best === null || distance < best.distance) {
+            best = { distance, npc, npcIndex, point, pointIndex };
+          }
+        });
+        return best && best.distance <= 13 ? best : null;
+      }
+
+      function drawNpcRouteRuns(npc, npcIndex, isSelected) {
+        const focused = state.selectedNpc === null || isSelected;
+        const inverseScale = 1 / Math.max(state.scale, 0.0001);
+        context.save();
+        context.translate(state.offsetX, state.offsetY);
+        context.scale(state.scale, -state.scale);
+        cachedNpcRouteRuns[npcIndex].forEach((run) => {
+          context.strokeStyle = classificationColor(run.kind, npc.color);
+          context.globalAlpha = focused
+            ? (run.kind === "candidate" || run.kind === "problem" ? 0.82 : 0.98)
+            : 0.14;
+          context.lineWidth = (isSelected ? 4 : 2.2) * inverseScale;
+          const dash = run.kind === "candidate" ? [8, 6] : run.kind === "problem" ? [2, 5] : [];
+          context.setLineDash(dash.map((length) => length * inverseScale));
+          context.stroke(run.path);
+        });
+        context.restore();
+      }
+
+      function drawSelectedNpcPoints(npc) {
+        const zoomRatio = Math.max(state.scale / Math.max(baseView.scale, 0.0001), 1);
+        const directionScale = Math.min(Math.sqrt(zoomRatio), 2.8);
+        npc.points.forEach((point, index) => {
+          const radius = 3.7;
+          const pointColor = pointDisplayColor(point, npc.color);
+          if (index === 0) {
+            drawNpcStartMarker(point, radius + 1.6, pointColor);
+          } else {
+            drawNpcDirectionMarker(
+              npc.points[index - 1],
+              point,
+              (radius + 2.2) * directionScale,
+              directionScale,
+              pointColor,
+            );
+          }
+          if (zoomRatio >= 1.7) drawPointOwnershipLabel(point, index, pointColor);
+        });
+      }
+
+      function remainingDistance(npc) {
+        if (Number.isFinite(data.finalDistanceToDestination)) {
+          return { value: data.finalDistanceToDestination, calculated: false };
+        }
+        if (!data.egoDestination || !npc.points.length) return null;
+        const lastPoint = npc.points[npc.points.length - 1];
+        return {
+          value: Math.hypot(
+            lastPoint.x - data.egoDestination.x,
+            lastPoint.y - data.egoDestination.y,
+          ),
+          calculated: true,
+        };
+      }
+
+      function remainingDistanceText(npc) {
+        const distance = remainingDistance(npc);
+        if (!distance) return "距目标终点未知";
+        const prefix = distance.calculated ? "计算距目标终点" : "距目标终点";
+        return `${prefix} ${distance.value.toFixed(1)} m`;
+      }
+
+      function drawMapLabel(position, text, color, offsetX = 11, offsetY = -19) {
+        context.save();
+        context.setLineDash([]);
+        context.font = "700 11px Segoe UI, Microsoft YaHei UI, sans-serif";
+        const width = context.measureText(text).width + 12;
+        const left = position.x + offsetX;
+        const top = position.y + offsetY;
+        context.globalAlpha = 0.96;
+        context.fillStyle = css("--panel-strong");
+        context.fillRect(left, top, width, 19);
+        context.strokeStyle = color;
+        context.lineWidth = 1;
+        context.strokeRect(left + 0.5, top + 0.5, width - 1, 18);
+        context.fillStyle = css("--ink");
+        context.textAlign = "left";
+        context.textBaseline = "middle";
+        context.fillText(text, left + 6, top + 9.5);
+        context.restore();
+      }
+
+      function drawConfiguredEgoMarker(point, label, color, destination = false) {
+        const position = screenPoint(point);
+        context.save();
+        context.setLineDash([]);
+        if (destination) {
+          context.globalAlpha = 0.18;
+          context.fillStyle = color;
+          context.beginPath();
+          context.arc(position.x, position.y, 15, 0, Math.PI * 2);
+          context.fill();
+        }
+        context.globalAlpha = 1;
+        context.fillStyle = css("--panel-strong");
+        context.strokeStyle = color;
+        context.lineWidth = 2.4;
+        context.beginPath();
+        context.arc(position.x, position.y, destination ? 10 : 8, 0, Math.PI * 2);
+        context.fill();
+        context.stroke();
+        context.beginPath();
+        context.arc(position.x, position.y, destination ? 3.1 : 2.5, 0, Math.PI * 2);
+        context.fillStyle = color;
+        context.fill();
+        if (destination) {
+          context.lineWidth = 1.4;
+          context.beginPath();
+          context.moveTo(position.x - 14, position.y);
+          context.lineTo(position.x + 14, position.y);
+          context.moveTo(position.x, position.y - 14);
+          context.lineTo(position.x, position.y + 14);
+          context.stroke();
+        }
+        context.restore();
+        drawMapLabel(position, label, color);
+      }
+
+      function drawStuckLastRecordedMarker(point) {
+        const position = screenPoint(point);
+        const color = css("--stuck");
+        context.save();
+        context.setLineDash([]);
+        context.globalAlpha = 1;
+        context.fillStyle = css("--panel-strong");
+        context.strokeStyle = color;
+        context.lineWidth = 2.4;
+        context.beginPath();
+        context.arc(position.x, position.y, 9, 0, Math.PI * 2);
+        context.fill();
+        context.stroke();
+        context.fillStyle = color;
+        context.fillRect(position.x - 3.5, position.y - 4.5, 2.5, 9);
+        context.fillRect(position.x + 1, position.y - 4.5, 2.5, 9);
+        context.restore();
+        drawMapLabel(position, "停滞时最后记录点", color, 12, 8);
+      }
+
+      function drawEgoRouteLandmarks(npc) {
+        if (!isEgo || npc !== data.npcs[0]) return;
+        const lastPoint = npc.points.length ? npc.points[npc.points.length - 1] : null;
+        if (data.stuck && lastPoint && data.egoDestination) {
+          const start = screenPoint(lastPoint);
+          const end = screenPoint(data.egoDestination);
+          context.save();
+          context.strokeStyle = css("--stuck");
+          context.lineWidth = 2;
+          context.setLineDash([8, 6]);
+          context.beginPath();
+          context.moveTo(start.x, start.y);
+          context.lineTo(end.x, end.y);
+          context.stroke();
+          context.restore();
+          drawMapLabel(
+            { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 },
+            remainingDistanceText(npc),
+            css("--stuck"),
+            8,
+            -23,
+          );
+        }
+        if (data.egoStart) {
+          drawConfiguredEgoMarker(
+            data.egoStart,
+            "场景配置起点",
+            css("--ego-start"),
+          );
+        }
+        if (data.egoDestination) {
+          drawConfiguredEgoMarker(
+            data.egoDestination,
+            "目标终点",
+            css("--ego-destination"),
+            true,
+          );
+        }
+        if (data.stuck && lastPoint) drawStuckLastRecordedMarker(lastPoint);
+      }
+
+      function drawNpc(npc, npcIndex, isSelected) {
+        if (!npc.points.length) {
+          if (isSelected) drawEgoRouteLandmarks(npc);
+          return;
+        }
+        context.save();
+        drawNpcRouteRuns(npc, npcIndex, isSelected);
+        if (isSelected) drawSelectedNpcPoints(npc);
+        if (isSelected) drawEgoRouteLandmarks(npc);
+
+        if (state.selectedNpc !== null && !isSelected) {
+          context.restore();
+          return;
+        }
+        const end = screenPoint(npc.points[npc.points.length - 1]);
+        context.setLineDash([]);
+        context.fillStyle = npc.color;
+        context.globalAlpha = 1;
+        context.font = `${isSelected ? 700 : 600} 11px Segoe UI, Microsoft YaHei UI, sans-serif`;
+        context.textAlign = "left";
+        context.textBaseline = "middle";
+        if (!isEgo) context.fillText(npc.label, end.x + 7, end.y);
+        context.restore();
+      }
+
+      function drawNpcStartMarker(point, size, color) {
+        const position = screenPoint(point);
+        const kind = pointKind(point);
+        context.setLineDash([]);
+        context.globalAlpha = 1;
+        if (kind === "problem") {
+          drawProblemMarker(position, size);
+          return;
+        }
+        context.beginPath();
+        context.arc(position.x, position.y, size, 0, Math.PI * 2);
+        context.fillStyle = kind === "candidate" ? css("--panel-strong") : color;
+        context.fill();
+        context.strokeStyle = color;
+        context.lineWidth = kind === "candidate" ? 2 : 1;
+        context.stroke();
+      }
+
+      function drawNpcDirectionMarker(previousPoint, point, size, directionScale, color) {
+        const previous = screenPoint(previousPoint);
+        const current = screenPoint(point);
+        const deltaX = current.x - previous.x;
+        const deltaY = current.y - previous.y;
+        const kind = pointKind(point);
+        context.setLineDash([]);
+        context.globalAlpha = 1;
+        if (kind === "problem") {
+          drawProblemMarker(current, Math.max(size * 0.72, 4));
+          return;
+        }
+        if (Math.hypot(deltaX, deltaY) < 0.5) {
+          context.beginPath();
+          context.arc(current.x, current.y, Math.max(size - 2, 2), 0, Math.PI * 2);
+          context.fillStyle = kind === "candidate" ? css("--panel-strong") : color;
+          context.fill();
+          context.strokeStyle = color;
+          context.lineWidth = kind === "candidate" ? 1.8 : 1;
+          context.stroke();
+          return;
+        }
+        const angle = Math.atan2(deltaY, deltaX);
+        context.beginPath();
+        context.moveTo(current.x + size * Math.cos(angle), current.y + size * Math.sin(angle));
+        context.lineTo(current.x + size * Math.cos(angle + 2.45), current.y + size * Math.sin(angle + 2.45));
+        context.lineTo(current.x + size * Math.cos(angle - 2.45), current.y + size * Math.sin(angle - 2.45));
+        context.closePath();
+        context.fillStyle = kind === "candidate" ? css("--panel-strong") : color;
+        context.fill();
+        context.strokeStyle = kind === "candidate" ? color : css("--panel-strong");
+        context.lineWidth = kind === "candidate"
+          ? Math.min(1.25 * directionScale, 2.4)
+          : Math.min(0.8 * directionScale, 1.6);
+        context.stroke();
+      }
+
+      function drawProblemMarker(position, size) {
+        context.fillStyle = css("--panel-strong");
+        context.beginPath();
+        context.arc(position.x, position.y, size * 0.78, 0, Math.PI * 2);
+        context.fill();
+        context.strokeStyle = css("--problem");
+        context.lineWidth = 2;
+        context.setLineDash([]);
+        context.beginPath();
+        context.moveTo(position.x - size * 0.58, position.y - size * 0.58);
+        context.lineTo(position.x + size * 0.58, position.y + size * 0.58);
+        context.moveTo(position.x + size * 0.58, position.y - size * 0.58);
+        context.lineTo(position.x - size * 0.58, position.y + size * 0.58);
+        context.stroke();
+      }
+
+      function drawPointOwnershipLabel(point, index, color) {
+        const position = screenPoint(point);
+        if (position.x < -80 || position.y < -24 || position.x > canvas.clientWidth + 24 || position.y > canvas.clientHeight + 24) return;
+        const kind = pointKind(point);
+        const ownership = kind === "candidate"
+          ? `? ${pointRoadText(point)}`
+          : kind === "problem" ? "! 异常" : pointRoadText(point);
+        const text = `P${index} ${ownership}`;
+        context.save();
+        context.setLineDash([]);
+        context.font = "650 10px Segoe UI, Microsoft YaHei UI, sans-serif";
+        const width = context.measureText(text).width + 8;
+        const left = position.x + 7;
+        const top = position.y - 18;
+        context.globalAlpha = 0.94;
+        context.fillStyle = css("--panel-strong");
+        context.fillRect(left, top, width, 15);
+        context.strokeStyle = color;
+        context.lineWidth = 1;
+        context.strokeRect(left + 0.5, top + 0.5, width - 1, 14);
+        context.fillStyle = css("--ink");
+        context.textAlign = "left";
+        context.textBaseline = "middle";
+        context.fillText(text, left + 4, top + 7.5);
+        context.restore();
+      }
+
+      const minimapBackgroundCanvas = document.createElement("canvas");
+      const minimapBackgroundContext = minimapBackgroundCanvas.getContext("2d");
+      let minimapBackgroundKey = "";
+      let minimapBackgroundTransform = null;
+
+      function minimapPoint(point, transform) {
+        return {
+          x: point.x * transform.scale + transform.offsetX,
+          y: -point.y * transform.scale + transform.offsetY,
+        };
+      }
+
+      function drawMinimapPolyline(targetContext, points, transform) {
+        if (points.length < 2) return;
+        const start = minimapPoint(points[0], transform);
+        targetContext.beginPath();
+        targetContext.moveTo(start.x, start.y);
+        for (let index = 1; index < points.length; index += 1) {
+          const point = minimapPoint(points[index], transform);
+          targetContext.lineTo(point.x, point.y);
+        }
+        targetContext.stroke();
+      }
+
+      function renderMinimapBackground(width, height, ratio) {
+        const cacheKey = `${Math.round(width * ratio)}:${Math.round(height * ratio)}:${state.selectedNpc}:${styleRevision}`;
+        if (cacheKey === minimapBackgroundKey && minimapBackgroundTransform) return minimapBackgroundTransform;
+
+        minimapBackgroundCanvas.width = Math.round(width * ratio);
+        minimapBackgroundCanvas.height = Math.round(height * ratio);
+        minimapBackgroundContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+        minimapBackgroundContext.clearRect(0, 0, width, height);
+
+        const bounds = worldBounds();
+        const padding = 8;
+        const worldWidth = Math.max(bounds.maxX - bounds.minX, 1);
+        const worldHeight = Math.max(bounds.maxY - bounds.minY, 1);
+        const scale = Math.min((width - padding * 2) / worldWidth, (height - padding * 2) / worldHeight);
+        const transform = {
+          scale,
+          offsetX: (width - worldWidth * scale) / 2 - bounds.minX * scale,
+          offsetY: (height - worldHeight * scale) / 2 + bounds.maxY * scale,
+        };
+
+        minimapBackgroundContext.save();
+        minimapBackgroundContext.strokeStyle = css("--lane-boundary");
+        minimapBackgroundContext.lineWidth = 2.2;
+        minimapBackgroundContext.globalAlpha = 0.72;
+        data.roads.forEach((road) => drawMinimapPolyline(minimapBackgroundContext, road.points, transform));
+        data.npcs.forEach((npc, index) => {
+          minimapBackgroundContext.strokeStyle = npc.color;
+          minimapBackgroundContext.lineWidth = state.selectedNpc === index ? 2 : 1;
+          minimapBackgroundContext.globalAlpha = state.selectedNpc === null || state.selectedNpc === index ? 0.72 : 0.2;
+          drawMinimapPolyline(minimapBackgroundContext, npc.points, transform);
+        });
+        minimapBackgroundContext.restore();
+
+        minimapBackgroundKey = cacheKey;
+        minimapBackgroundTransform = transform;
+        return transform;
+      }
+
+      function renderMinimap() {
+        const isVisible = state.scale > baseView.scale * 1.35;
+        minimap.classList.toggle("is-visible", isVisible);
+        if (!isVisible) return;
+
+        const ratio = window.devicePixelRatio || 1;
+        const width = Math.max(minimapCanvas.clientWidth, 1);
+        const height = Math.max(minimapCanvas.clientHeight, 1);
+        if (minimapCanvas.width !== Math.round(width * ratio) || minimapCanvas.height !== Math.round(height * ratio)) {
+          minimapCanvas.width = Math.round(width * ratio);
+          minimapCanvas.height = Math.round(height * ratio);
+          minimapContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+        }
+        minimapContext.clearRect(0, 0, width, height);
+        const transform = renderMinimapBackground(width, height, ratio);
+        minimapContext.save();
+        minimapContext.globalAlpha = 1;
+        minimapContext.drawImage(minimapBackgroundCanvas, 0, 0, width, height);
+
+        const visibleMinX = -state.offsetX / state.scale;
+        const visibleMaxX = (canvas.clientWidth - state.offsetX) / state.scale;
+        const visibleMaxY = state.offsetY / state.scale;
+        const visibleMinY = (state.offsetY - canvas.clientHeight) / state.scale;
+        const topLeft = minimapPoint({ x: visibleMinX, y: visibleMaxY }, transform);
+        const bottomRight = minimapPoint({ x: visibleMaxX, y: visibleMinY }, transform);
+        minimapContext.globalAlpha = 0.14;
+        minimapContext.fillStyle = css("--accent");
+        minimapContext.fillRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+        minimapContext.globalAlpha = 1;
+        minimapContext.strokeStyle = css("--accent");
+        minimapContext.lineWidth = 1.6;
+        minimapContext.strokeRect(topLeft.x, topLeft.y, bottomRight.x - topLeft.x, bottomRight.y - topLeft.y);
+        minimapContext.restore();
+      }
+
+      function render() {
+        context.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+        drawRoads();
+        data.npcs.forEach((npc, index) => drawNpc(npc, index, state.selectedNpc === index));
+        renderMinimap();
+      }
+
+      let renderFrame = null;
+
+      function scheduleRender() {
+        if (renderFrame !== null) return;
+        renderFrame = requestAnimationFrame(() => {
+          renderFrame = null;
+          render();
+        });
+      }
+
+      function uniqueRoadIds(points, kind) {
+        const roadIds = [];
+        points.forEach((point) => {
+          if (pointKind(point) !== kind) return;
+          point.roadIds.forEach((roadId) => {
+            if (!roadIds.includes(roadId)) roadIds.push(roadId);
+          });
+        });
+        return roadIds;
+      }
+
+      function npcResolvedRoadIds(npc) {
+        return npc.resolvedRoadIds || uniqueRoadIds(npc.points, "resolved");
+      }
+
+      function npcCandidateRoadIds(npc) {
+        return npc.candidateRoadIds || uniqueRoadIds(npc.points, "candidate");
+      }
+
+      function roadIdsText(roadIds) {
+        return roadIds.length ? roadIds.map((roadId) => `R${roadId}`).join(" → ") : "无";
+      }
+
+      function appendRoadGroup(container, kind, label, detail) {
+        const group = document.createElement("span");
+        group.className = `road-group ${kind}`;
+        const chip = document.createElement("span");
+        chip.className = `road-kind ${kind}`;
+        chip.textContent = label;
+        const value = document.createElement("span");
+        value.textContent = detail;
+        group.append(chip, value);
+        container.append(group);
+      }
+
+      function formatEgoLandmarkCoordinate(label, point) {
+        if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+          return `${label}：坐标数据缺失`;
+        }
+        return `${label}：预览坐标 X ${point.x.toFixed(2)} / Y ${point.y.toFixed(2)}`;
+      }
+
+      function appendEgoLandmarkCoordinates(container) {
+        const coordinates = document.createElement("div");
+        coordinates.className = "ego-landmark-coordinates";
+        [
+          ["场景配置起点", data.egoStart, css("--ego-start")],
+          ["目标终点", data.egoDestination, css("--ego-destination")],
+        ].forEach(([label, point, color]) => {
+          const row = document.createElement("span");
+          row.className = "ego-landmark-coordinate";
+          row.style.setProperty("--landmark-color", color);
+          row.textContent = formatEgoLandmarkCoordinate(label, point);
+          coordinates.append(row);
+        });
+        container.append(coordinates);
+      }
+
+      function buildEgoRouteSummary(npc) {
+        if (!isEgo) return null;
+        const summary = document.createElement("div");
+        summary.className = `ego-route-summary${data.stuck ? " stuck" : ""}`;
+        const landmarksReady = data.egoStart && data.egoDestination;
+        if (data.stuck) {
+          const heading = document.createElement("strong");
+          heading.textContent = "车辆停滞";
+          summary.append(heading);
+          if (npc.points.length) {
+            summary.append(` · 停滞时最后记录点${remainingDistanceText(npc)}。`);
+          } else {
+            summary.append(" · 未记录轨迹，无法显示停滞时最后记录点。");
+          }
+        } else {
+          summary.textContent = landmarksReady
+            ? "场景配置起点与目标终点已在地图中标出。"
+            : "场景配置的起点或目标终点数据不完整。";
+        }
+        appendEgoLandmarkCoordinates(summary);
+        return summary;
+      }
+
+      function updateSelection() {
+        [...npcList.querySelectorAll(".npc-row")].forEach((row, index) => {
+          row.setAttribute("aria-pressed", String(index === state.selectedNpc));
+        });
+        if (state.selectedNpc === null) {
+          selectedDetail.innerHTML = "<h3>查看全部路径</h3><p>总览模式仅绘制各 NPC 的整体路线，不绘制路径点。选择 NPC 后可查看路径点、行驶方向和逐点道路归属。</p>";
+        } else {
+          const npc = data.npcs[state.selectedNpc];
+          selectedDetail.replaceChildren();
+          const title = document.createElement("h3");
+          title.textContent = `${npc.label} · 路径点道路归属`;
+          const detail = document.createElement("p");
+          const resolvedCount = npc.resolvedPointCount ?? npc.points.filter((point) => pointKind(point) === "resolved").length;
+          const candidateCount = npc.candidatePointCount ?? npc.points.filter((point) => pointKind(point) === "candidate").length;
+          const problemCount = npc.problemPointCount ?? npc.points.length - resolvedCount - candidateCount;
+          detail.textContent = `${npc.points.length} 个位置：${resolvedCount} 个确定，${candidateCount} 个候选，${problemCount} 个异常。`;
+
+          const roadSummary = document.createElement("div");
+          roadSummary.className = "road-list";
+          appendRoadGroup(roadSummary, "resolved", "确定道路", roadIdsText(npcResolvedRoadIds(npc)));
+          appendRoadGroup(roadSummary, "candidate", "候选道路", roadIdsText(npcCandidateRoadIds(npc)));
+          if (problemCount) appendRoadGroup(roadSummary, "problem", "异常点", `${problemCount} 个`);
+
+          const routeSummary = buildEgoRouteSummary(npc);
+
+          const pointList = document.createElement("ol");
+          pointList.className = "point-list";
+          npc.points.forEach((point, index) => {
+            const row = document.createElement("li");
+            row.className = `point-row ${routeKind(point)}`;
+            row.style.setProperty(
+              "--point-color",
+              pointDisplayColor(point, npc.color),
+            );
+            const pointIndex = document.createElement("span");
+            pointIndex.className = "point-index";
+            pointIndex.textContent = isEgo && data.stuck && index === npc.points.length - 1
+              ? "停滞末点"
+              : index === 0 && !isEgo ? "起点" : `P${index}`;
+            const owner = document.createElement("span");
+            owner.className = "point-owner";
+            const ownership = document.createElement("strong");
+            ownership.textContent = pointStatusText(point);
+            owner.append(ownership);
+            if (Number.isFinite(point.speed)) owner.append(` · 速度 ${point.speed.toFixed(1)}`);
+            row.append(pointIndex, owner);
+            pointList.append(row);
+          });
+          selectedDetail.append(
+            title,
+            detail,
+            ...(routeSummary ? [routeSummary] : []),
+            roadSummary,
+            pointList,
+          );
+        }
+        scheduleRender();
+      }
+
+      function buildNpcList() {
+        npcList.replaceChildren();
+        data.npcs.forEach((npc, index) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "npc-row";
+          button.setAttribute("aria-pressed", "false");
+          button.style.setProperty("--npc-color", npc.color);
+          button.innerHTML = `
+            <span class="npc-color" aria-hidden="true"></span>
+            <span>
+              <span class="npc-name-line">
+                <span class="npc-name"></span>
+                <span class="npc-count"></span>
+              </span>
+              <span class="road-list"></span>
+            </span>`;
+          button.querySelector(".npc-name").textContent = npc.label;
+          button.querySelector(".npc-count").textContent = `${npc.points.length} 点`;
+          const roadList = button.querySelector(".road-list");
+          const resolvedRoadIds = npcResolvedRoadIds(npc);
+          const candidateRoadIds = npcCandidateRoadIds(npc);
+          const problemCount = npc.problemPointCount ?? npc.points.filter((point) => pointKind(point) === "problem").length;
+          if (resolvedRoadIds.length) appendRoadGroup(roadList, "resolved", "确定", roadIdsText(resolvedRoadIds));
+          if (candidateRoadIds.length) appendRoadGroup(roadList, "candidate", "候选", roadIdsText(candidateRoadIds));
+          if (problemCount) appendRoadGroup(roadList, "problem", "异常", `${problemCount} 点`);
+          if (!roadList.children.length) appendRoadGroup(roadList, "problem", "未匹配", "无道路");
+          button.addEventListener("click", () => {
+            state.selectedNpc = state.selectedNpc === index ? null : index;
+            if (state.selectedNpc === null) fitView();
+            else fitNpcView(npc);
+            updateSelection();
+          });
+          npcList.append(button);
+        });
+      }
+
+      function resizeCanvas({ reset = false } = {}) {
+        const ratio = window.devicePixelRatio || 1;
+        const width = Math.max(shell.clientWidth, 1);
+        const height = Math.max(shell.clientHeight, 1);
+        if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
+          canvas.width = Math.round(width * ratio);
+          canvas.height = Math.round(height * ratio);
+          canvas.style.width = `${width}px`;
+          canvas.style.height = `${height}px`;
+          context.setTransform(ratio, 0, 0, ratio, 0, 0);
+          if (reset) fitView();
+          scheduleRender();
+        }
+      }
+
+      canvas.addEventListener("wheel", (event) => {
+        event.preventDefault();
+        laneTooltip.hidden = true;
+        pendingTooltipPosition = null;
+        const bounds = canvas.getBoundingClientRect();
+        const pointerX = event.clientX - bounds.left;
+        const pointerY = event.clientY - bounds.top;
+        const worldX = (pointerX - state.offsetX) / state.scale;
+        const worldY = -(pointerY - state.offsetY) / state.scale;
+        const factor = Math.exp(-event.deltaY * 0.0012);
+        const nextScale = Math.min(Math.max(state.scale * factor, baseView.scale * 0.25), baseView.scale * 80);
+        state.scale = nextScale;
+        state.offsetX = pointerX - worldX * nextScale;
+        state.offsetY = pointerY + worldY * nextScale;
+        scheduleRender();
+      }, { passive: false });
+
+      canvas.addEventListener("pointerdown", (event) => {
+        laneTooltip.hidden = true;
+        pendingTooltipPosition = null;
+        state.dragging = true;
+        state.lastX = event.clientX;
+        state.lastY = event.clientY;
+        canvas.classList.add("dragging");
+        canvas.setPointerCapture(event.pointerId);
+      });
+
+      canvas.addEventListener("pointermove", (event) => {
+        if (!state.dragging) {
+          scheduleLaneTooltip(event);
+          return;
+        }
+        state.offsetX += event.clientX - state.lastX;
+        state.offsetY += event.clientY - state.lastY;
+        state.lastX = event.clientX;
+        state.lastY = event.clientY;
+        scheduleRender();
+      });
+
+      function stopDragging(event) {
+        state.dragging = false;
+        canvas.classList.remove("dragging");
+        if (event.pointerId !== undefined && canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      }
+
+      canvas.addEventListener("pointerup", stopDragging);
+      canvas.addEventListener("pointercancel", stopDragging);
+      canvas.addEventListener("pointerleave", () => {
+        pendingTooltipPosition = null;
+        laneTooltip.hidden = true;
+      });
+      document.getElementById("reset-view").addEventListener("click", () => {
+        fitView();
+        scheduleRender();
+      });
+
+      const media = window.matchMedia("(prefers-color-scheme: dark)");
+      media.addEventListener?.("change", () => {
+        refreshPalette();
+        scheduleRender();
+      });
+      new ResizeObserver(() => resizeCanvas({ reset: canvas.width === 0 })).observe(shell);
+
+      buildNpcList();
+      resizeCanvas({ reset: true });
+      if (isEgo && data.npcs.length === 1) fitNpcView(data.npcs[0]);
+      updateSelection();
+    })();
+  </script>
+</body>
+</html>

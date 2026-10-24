@@ -630,8 +630,8 @@ def list_dsl_answer_subtasks(connection, case_id, agent_type):
     if agent_type not in AGENT_TYPES:
         raise ValueError(f"Unsupported agent type: {agent_type}")
     _find_case(connection, case_id=case_id)
-    alignment = list_case_road_alignments(connection, [case_id]).get(case_id)
-    aligned_road_id = _matched_alignment_road_id(alignment)
+    # DSL/tool standards retain dsl_answers road_id; alignment is for scene validation only.
+    aligned_road_id = None
     rows = connection.execute(
         """
         SELECT *
@@ -783,9 +783,9 @@ def list_auto_review_baselines(connection, case_ids):
             )
 
     for row in dsl_rows:
-        aligned_road_id = _matched_alignment_road_id(
-            road_alignments.get(row["case_id"])
-        )
+        # Keep DSL/tool standards on their database road IDs; alignment is
+        # exposed separately for actual-scene validation.
+        aligned_road_id = None
         result[row["case_id"]][row["agent_type"]].append(
             {
                 "dsl_answer_id": row["dsl_answer_id"],
@@ -1306,10 +1306,8 @@ def list_dsl_answer_entries(connection, case_id, agent_type):
         """,
         (case_id, agent_type),
     ).fetchall()
-    alignment = list_case_road_alignments(connection, [case_id]).get(case_id)
-    return _synchronize_dsl_entries(
-        _merge_dsl_answer_rows(rows), _matched_alignment_road_id(alignment)
-    )
+    # Return semantic standards exactly as stored in dsl_answers.
+    return _merge_dsl_answer_rows(rows)
 
 
 def _normalize_dsl_entries(entries, agent_type):
@@ -1349,17 +1347,7 @@ def replace_dsl_answer_entries(connection, case_id, agent_type, entries):
         raise ValueError(f"Unsupported agent type: {agent_type}")
     case = _find_case(connection, case_id=case_id)
     normalized = _normalize_dsl_entries(entries, agent_type)
-    alignment = list_case_road_alignments(connection, [case_id]).get(case_id)
-    aligned_road_id = _matched_alignment_road_id(alignment)
-    if aligned_road_id:
-        normalized = [
-            (
-                _synchronize_dsl_road_ids(payload, aligned_road_id),
-                metadata,
-                review_status,
-            )
-            for payload, metadata, review_status in normalized
-        ]
+    # Preserve submitted standard-answer road IDs.
     existing_rows = connection.execute(
         """
         SELECT * FROM dsl_answers

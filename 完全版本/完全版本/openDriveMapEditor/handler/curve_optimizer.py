@@ -27,6 +27,7 @@ import numpy as np
 from scipy.optimize import minimize
 
 from editor.editorCurve import editorCurve
+from handler.handlerCurve import handlerC
 from utils import agent_road_context, agent_trace
 from xodrs.xodrParser import XParser
 
@@ -222,7 +223,7 @@ class CurveOptimizationService:
         del road_id, user_request
         return 0
 
-    def _build_curve_context(self, road_id, geometry_index):
+    def _build_curve_context(self, road_id, geometry_index, prepare_fit=True):
         """构造发给 curve 优化 Agent 的上下文信息。"""
         curve_context = None
         if agent_road_context.use_manual_road_context():
@@ -231,6 +232,8 @@ class CurveOptimizationService:
             )
         # 获取真实数据
         if curve_context is None:
+            if prepare_fit:
+                handlerC.prepare_road_fit(str(road_id))
             control_points = self._get_geometry_control_points(
                 road_id, geometry_index
             )

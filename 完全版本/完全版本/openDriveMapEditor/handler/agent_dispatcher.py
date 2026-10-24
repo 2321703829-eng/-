@@ -136,6 +136,16 @@ class AgentDispatcher:
         return execution_results
 
     async def _prepare_split_commands_async(self, commands):
+        # Fit all real curve roads before parallel child agents read any context.
+        # Width/slope must see the same fitted length and geometry as Curve.
+        for command in commands:
+            self._validate_manager_command(command)
+        if not _use_manual_road_context():
+            for road_id in dict.fromkeys(
+                self._manager_road_id(command) for command in commands
+                if self._trace_command_type(command) == "curve"
+            ):
+                handlerC.prepare_road_fit(road_id)
         tasks = []
         for index, command in enumerate(commands, start=1):
             self._validate_manager_command(command)

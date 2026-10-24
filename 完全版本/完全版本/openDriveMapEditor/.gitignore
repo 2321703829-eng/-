@@ -1,0 +1,12 @@
+.*/
+pics/
+data/
+skills/
+testfucs/.*
+llm/.*
+.env
+!.git/
+!.gitignore
+*.pyc
+testfucs/run_data/*
+!testfucs/agent_trace_viewer/request_tests.sqlite3

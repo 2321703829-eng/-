@@ -1,0 +1,910 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ResultAna 场景可视化</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #e9efec;
+      --panel: #f8fbf9;
+      --panel-strong: #ffffff;
+      --ink: #17211d;
+      --muted: #68766f;
+      --line: #d5ded9;
+      --accent: #176449;
+      --accent-soft: #dcece4;
+      --danger: #a43c3c;
+      --danger-soft: #f7e4e2;
+      --shadow: 0 18px 45px rgba(30, 49, 40, 0.12);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --page: #101815;
+        --panel: #18221e;
+        --panel-strong: #202c27;
+        --ink: #edf5f1;
+        --muted: #9dafA7;
+        --line: #35443d;
+        --accent: #68c89f;
+        --accent-soft: #244738;
+        --danger: #ff9a93;
+        --danger-soft: #4b2928;
+        --shadow: 0 18px 45px rgba(0, 0, 0, 0.3);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 5% 0%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 32rem),
+        var(--page);
+      color: var(--ink);
+      font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    }
+
+    button, input { font: inherit; }
+
+    .app {
+      display: grid;
+      grid-template-columns: 340px minmax(0, 1fr);
+      height: 100vh;
+      gap: 12px;
+      padding: 12px;
+    }
+
+    .control-panel, .viewer-shell {
+      min-height: 0;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .control-panel {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .brand {
+      padding: 18px 18px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      margin: 0 0 5px;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h1 { margin: 0; font-size: 22px; letter-spacing: -0.03em; }
+    .brand p { margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+
+    .mode-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      margin: 10px 12px 0;
+      padding: 4px;
+      border-radius: 12px;
+      background: color-mix(in srgb, var(--line) 45%, transparent);
+    }
+
+    .mode-tab {
+      min-height: 40px;
+      border: 0;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 720;
+      cursor: pointer;
+    }
+
+    .mode-tab[aria-selected="true"] {
+      background: var(--panel-strong);
+      color: var(--accent);
+      box-shadow: 0 2px 8px rgba(30, 49, 40, 0.1);
+    }
+
+    .mode-panel {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+      flex-direction: column;
+    }
+
+    .mode-panel[hidden] { display: none; }
+
+    .import-form {
+      display: grid;
+      gap: 9px;
+      padding: 14px 14px 13px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .file-field {
+      display: grid;
+      grid-template-columns: 46px minmax(0, 1fr);
+      align-items: center;
+      gap: 10px;
+      min-height: 56px;
+      padding: 8px 10px;
+      border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line));
+      border-radius: 12px;
+      background: var(--panel-strong);
+      cursor: pointer;
+    }
+
+    .file-field:hover { border-style: solid; }
+    .file-field.drag-active {
+      border-style: solid;
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+    .file-kind { color: var(--accent); font-size: 11px; font-weight: 750; text-align: center; }
+    .file-copy { min-width: 0; }
+    .file-title { display: block; font-size: 12px; font-weight: 650; }
+    .file-name { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-field input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+    .import-button {
+      min-height: 42px;
+      border: 0;
+      border-radius: 11px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .import-button:hover { filter: brightness(1.06); }
+    .import-button:disabled { cursor: wait; opacity: 0.6; }
+
+    .parse-progress {
+      display: grid;
+      gap: 7px;
+      padding: 10px 11px;
+      border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+      border-radius: 10px;
+      background: var(--accent-soft);
+    }
+
+    .parse-progress[hidden] { display: none; }
+
+    .progress-copy {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--ink);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .progress-copy span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .progress-copy strong { flex: none; color: var(--accent); font-variant-numeric: tabular-nums; }
+
+    .progress-track {
+      height: 6px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 18%, var(--panel-strong));
+    }
+
+    .progress-fill {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 180ms ease-out;
+    }
+
+    .parse-progress.error {
+      border-color: color-mix(in srgb, var(--danger) 35%, var(--line));
+      background: var(--danger-soft);
+    }
+
+    .parse-progress.error .progress-copy strong,
+    .parse-progress.error .progress-fill { color: var(--danger); background: var(--danger); }
+
+    .status {
+      min-height: 18px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .status.error { color: var(--danger); }
+    .status.success { color: var(--accent); }
+
+    .history-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 13px 15px 8px;
+    }
+
+    .history-header h2 { margin: 0; font-size: 14px; }
+    .history-count { color: var(--muted); font-size: 11px; }
+
+    .history-list {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 0 9px 10px;
+    }
+
+    .history-empty {
+      margin: 10px 6px;
+      padding: 18px 12px;
+      border: 1px dashed var(--line);
+      border-radius: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+      text-align: center;
+    }
+
+    .history-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 7px;
+      padding: 7px;
+      border: 1px solid transparent;
+      border-radius: 12px;
+    }
+
+    .history-item + .history-item { margin-top: 3px; }
+    .history-item.selected { border-color: var(--line); background: var(--panel-strong); }
+
+    .history-open {
+      min-width: 0;
+      padding: 5px;
+      border: 0;
+      background: transparent;
+      color: var(--ink);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .history-name { display: block; font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history-files { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history-meta { display: flex; gap: 7px; margin-top: 6px; color: var(--muted); font-size: 10px; }
+
+    .delete-button {
+      align-self: center;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+    }
+
+    .delete-button:hover { border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); background: var(--danger-soft); color: var(--danger); }
+
+    button:focus-visible, .file-field:focus-within {
+      outline: 3px solid color-mix(in srgb, var(--accent) 42%, transparent);
+      outline-offset: 2px;
+    }
+
+    .viewer-shell { position: relative; background: var(--panel-strong); }
+
+    #viewer-frame {
+      display: block;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: var(--panel-strong);
+    }
+
+    .viewer-empty {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-content: center;
+      padding: 30px;
+      text-align: center;
+      background:
+        linear-gradient(90deg, color-mix(in srgb, var(--line) 30%, transparent) 1px, transparent 1px),
+        linear-gradient(color-mix(in srgb, var(--line) 30%, transparent) 1px, transparent 1px),
+        var(--panel-strong);
+      background-size: 28px 28px;
+    }
+
+    .viewer-empty[hidden] { display: none; }
+    .viewer-empty strong { font-size: 18px; }
+    .viewer-empty span { max-width: 430px; margin-top: 7px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+    @media (max-width: 800px) {
+      body { overflow: auto; }
+      .app { grid-template-columns: 1fr; grid-template-rows: auto minmax(68vh, 600px); height: auto; min-height: 100vh; }
+      .control-panel { max-height: 560px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <aside class="control-panel" aria-label="数据载入和历史记录">
+      <header class="brand">
+        <p class="eyebrow">Local scenario analysis</p>
+        <h1>ResultAna</h1>
+        <p>选择或拖入场景文件，Python 会在本机匹配地图并完成道路定位和轨迹分析。</p>
+      </header>
+
+      <div class="mode-tabs" role="tablist" aria-label="分析模式">
+        <button class="mode-tab" id="scene-mode-tab" type="button" role="tab" aria-selected="true">NPC 场景可视化</button>
+        <button class="mode-tab" id="ego-mode-tab" type="button" role="tab" aria-selected="false">EGO 合规分析</button>
+      </div>
+
+      <section class="mode-panel" id="scene-mode-panel" role="tabpanel">
+      <form class="import-form" id="import-form">
+        <label for="task-label">任务标识（可选，例如：多智能体 req_000004）</label>
+        <input id="task-label" type="text" maxlength="200" placeholder="输入任务编号，保存在历史记录中" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:inherit;">
+        <label class="file-field" id="xodr-drop-zone">
+          <span class="file-kind">XODR</span>
+          <span class="file-copy">
+            <span class="file-title">选择或拖入道路文件（可选）</span>
+            <span class="file-name" id="xodr-name">也可由 JSON 自动匹配</span>
+          </span>
+          <input id="xodr-file" name="xodr" type="file" accept=".xodr">
+        </label>
+        <label class="file-field" id="scenario-drop-zone">
+          <span class="file-kind">JSON</span>
+          <span class="file-copy">
+            <span class="file-title">选择或拖入场景配置</span>
+            <span class="file-name" id="scenario-name">尚未选择</span>
+          </span>
+          <input id="scenario-file" name="scenario" type="file" accept=".json,application/json">
+        </label>
+        <button class="import-button" id="import-button" type="submit">载入并分析</button>
+        <div class="parse-progress" id="parse-progress" hidden>
+          <div class="progress-copy">
+            <span id="progress-message">准备解析</span>
+            <strong id="progress-value">0%</strong>
+          </div>
+          <div class="progress-track" id="progress-track" role="progressbar" aria-label="场景解析进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+        </div>
+        <p class="status" id="status" aria-live="polite"></p>
+      </form>
+
+      <div class="history-header">
+        <h2>历史记录</h2>
+        <span class="history-count" id="history-count">0 条</span>
+      </div>
+      <div class="history-list" id="history-list"></div>
+      </section>
+
+      <section class="mode-panel" id="ego-mode-panel" role="tabpanel" hidden>
+        <form class="import-form" id="ego-import-form">
+          <label class="file-field" id="ego-log-drop-zone">
+            <span class="file-kind">EGO</span>
+            <span class="file-copy">
+              <span class="file-title">选择或拖入 EGO 轨迹日志（JSONL / JSON）</span>
+              <span class="file-name" id="ego-log-name">尚未选择</span>
+            </span>
+            <input id="ego-log-file" name="ego-log" type="file" accept=".jsonl,.json,application/json,application/x-ndjson">
+          </label>
+          <button class="import-button" id="ego-import-button" type="submit">分析全部 EGO 运行</button>
+          <div class="parse-progress" id="ego-parse-progress" hidden>
+            <div class="progress-copy">
+              <span id="ego-progress-message">准备分析</span>
+              <strong id="ego-progress-value">0%</strong>
+            </div>
+            <div class="progress-track" id="ego-progress-track" role="progressbar" aria-label="EGO 轨迹分析进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div class="progress-fill" id="ego-progress-fill"></div>
+            </div>
+          </div>
+          <p class="status" id="ego-status" aria-live="polite"></p>
+        </form>
+
+        <div class="history-header">
+          <h2>EGO 分析历史</h2>
+          <span class="history-count" id="ego-history-count">0 条</span>
+        </div>
+        <div class="history-list" id="ego-history-list"></div>
+      </section>
+    </aside>
+
+    <section class="viewer-shell" aria-label="地图和 NPC 路径可视化">
+      <iframe id="viewer-frame" title="地图和 NPC 路径可视化"></iframe>
+      <div class="viewer-empty" id="viewer-empty">
+        <strong>载入一组场景数据</strong>
+        <span>从左侧拖入 JSON，地图可根据 map.name 自动匹配；也可以手动指定 XODR。处理过程和历史数据都保留在本机。</span>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const form = document.getElementById("import-form");
+      const importButton = document.getElementById("import-button");
+      const xodrInput = document.getElementById("xodr-file");
+      const scenarioInput = document.getElementById("scenario-file");
+      const xodrDropZone = document.getElementById("xodr-drop-zone");
+      const scenarioDropZone = document.getElementById("scenario-drop-zone");
+      const xodrName = document.getElementById("xodr-name");
+      const scenarioName = document.getElementById("scenario-name");
+      const statusLine = document.getElementById("status");
+      const progressPanel = document.getElementById("parse-progress");
+      const progressMessage = document.getElementById("progress-message");
+      const progressValue = document.getElementById("progress-value");
+      const progressTrack = document.getElementById("progress-track");
+      const progressFill = document.getElementById("progress-fill");
+      const historyList = document.getElementById("history-list");
+      const historyCount = document.getElementById("history-count");
+      const viewerFrame = document.getElementById("viewer-frame");
+      const viewerEmpty = document.getElementById("viewer-empty");
+      const sceneModeTab = document.getElementById("scene-mode-tab");
+      const egoModeTab = document.getElementById("ego-mode-tab");
+      const sceneModePanel = document.getElementById("scene-mode-panel");
+      const egoModePanel = document.getElementById("ego-mode-panel");
+      const egoForm = document.getElementById("ego-import-form");
+      const egoImportButton = document.getElementById("ego-import-button");
+      const egoLogInput = document.getElementById("ego-log-file");
+      const egoLogDropZone = document.getElementById("ego-log-drop-zone");
+      const egoLogName = document.getElementById("ego-log-name");
+      const egoStatusLine = document.getElementById("ego-status");
+      const egoProgressPanel = document.getElementById("ego-parse-progress");
+      const egoProgressMessage = document.getElementById("ego-progress-message");
+      const egoProgressValue = document.getElementById("ego-progress-value");
+      const egoProgressTrack = document.getElementById("ego-progress-track");
+      const egoProgressFill = document.getElementById("ego-progress-fill");
+      const egoHistoryList = document.getElementById("ego-history-list");
+      const egoHistoryCount = document.getElementById("ego-history-count");
+      let currentId = null;
+      let currentMode = "scene";
+      let selectedXodrFile = null;
+      let selectedScenarioFile = null;
+      let selectedEgoLogFile = null;
+
+      async function request(path, options = {}) {
+        const response = await fetch(path, options);
+        const contentType = response.headers.get("Content-Type") || "";
+        const body = contentType.startsWith("application/json")
+          ? await response.json()
+          : await response.text();
+        if (!response.ok) {
+          throw new Error(body.error || `请求失败（${response.status}）`);
+        }
+        return body;
+      }
+
+      function setStatus(message, kind = "") {
+        statusLine.textContent = message;
+        statusLine.className = `status ${kind}`.trim();
+      }
+
+      function setEgoStatus(message, kind = "") {
+        egoStatusLine.textContent = message;
+        egoStatusLine.className = `status ${kind}`.trim();
+      }
+
+      function setProgress(value, message, kind = "") {
+        const percent = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+        progressPanel.hidden = false;
+        progressPanel.className = `parse-progress ${kind}`.trim();
+        progressMessage.textContent = message;
+        progressValue.textContent = `${percent}%`;
+        progressFill.style.width = `${percent}%`;
+        progressTrack.setAttribute("aria-valuenow", String(percent));
+        progressTrack.setAttribute("aria-valuetext", `${message}，${percent}%`);
+      }
+
+      function setEgoProgress(value, message, kind = "") {
+        const percent = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+        egoProgressPanel.hidden = false;
+        egoProgressPanel.className = `parse-progress ${kind}`.trim();
+        egoProgressMessage.textContent = message;
+        egoProgressValue.textContent = `${percent}%`;
+        egoProgressFill.style.width = `${percent}%`;
+        egoProgressTrack.setAttribute("aria-valuenow", String(percent));
+        egoProgressTrack.setAttribute("aria-valuetext", `${message}，${percent}%`);
+      }
+
+      function wait(milliseconds) {
+        return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+      }
+
+      async function waitForImportJob(jobId, updateProgress = setProgress) {
+        while (true) {
+          const job = await request(`/api/import-jobs/${encodeURIComponent(jobId)}`);
+          updateProgress(job.progress, job.message || "正在解析");
+          if (job.state === "completed") return job.result;
+          if (job.state === "failed") throw new Error(job.error || "场景解析失败。");
+          await wait(250);
+        }
+      }
+
+      function openRecord(recordId) {
+        currentMode = "scene";
+        currentId = recordId;
+        viewerFrame.src = `/view/${encodeURIComponent(recordId)}`;
+        viewerEmpty.hidden = true;
+        renderSelection();
+      }
+
+      function openEgoRecord(recordId) {
+        currentMode = "ego";
+        currentId = recordId;
+        viewerFrame.src = `/ego/${encodeURIComponent(recordId)}`;
+        viewerEmpty.hidden = true;
+        renderSelection();
+      }
+
+      function clearViewer() {
+        currentId = null;
+        viewerFrame.removeAttribute("src");
+        viewerEmpty.hidden = false;
+        renderSelection();
+      }
+
+      function renderSelection() {
+        historyList.querySelectorAll(".history-item").forEach((item) => {
+          item.classList.toggle("selected", currentMode === "scene" && item.dataset.recordId === currentId);
+        });
+        egoHistoryList.querySelectorAll(".history-item").forEach((item) => {
+          item.classList.toggle("selected", currentMode === "ego" && item.dataset.recordId === currentId);
+        });
+      }
+
+      function formatTime(value) {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("zh-CN", { hour12: false });
+      }
+
+      function renderHistory(items) {
+        historyList.replaceChildren();
+        historyCount.textContent = `${items.length} 条`;
+        if (!items.length) {
+          const empty = document.createElement("div");
+          empty.className = "history-empty";
+          empty.textContent = "暂无历史记录。成功载入的数据会自动保存在这里。";
+          historyList.append(empty);
+          return;
+        }
+
+        items.forEach((item) => {
+          const article = document.createElement("article");
+          article.className = "history-item";
+          article.dataset.recordId = item.id;
+
+          const openButton = document.createElement("button");
+          openButton.type = "button";
+          openButton.className = "history-open";
+          openButton.title = "打开这条历史记录";
+
+          const name = document.createElement("span");
+          name.className = "history-name";
+          name.textContent = item.mapName;
+          const files = document.createElement("span");
+          files.className = "history-files";
+          const taskPrefix = item.taskLabel ? `${item.taskLabel} · ` : "";
+          files.textContent = `${taskPrefix}${item.xodrName} · ${item.scenarioName}`;
+          const meta = document.createElement("span");
+          meta.className = "history-meta";
+          meta.textContent = `${item.summary.roadCount} 道路 · ${item.summary.npcCount} NPC · ${formatTime(item.updatedAt)}`;
+          openButton.append(name, files, meta);
+          openButton.addEventListener("click", () => openRecord(item.id));
+
+          const deleteButton = document.createElement("button");
+          deleteButton.type = "button";
+          deleteButton.className = "delete-button";
+          deleteButton.title = `删除 ${item.mapName}`;
+          deleteButton.setAttribute("aria-label", `删除 ${item.mapName}`);
+          deleteButton.textContent = "×";
+          deleteButton.addEventListener("click", async () => {
+            if (!window.confirm(`确定删除“${item.mapName}”的历史记录吗？`)) return;
+            try {
+              await request(`/api/history/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+              if (currentId === item.id) clearViewer();
+              setStatus("历史记录已删除。", "success");
+              await loadHistory();
+            } catch (error) {
+              setStatus(error.message, "error");
+            }
+          });
+
+          article.append(openButton, deleteButton);
+          historyList.append(article);
+        });
+        renderSelection();
+      }
+
+      async function loadHistory({ openLatest = false } = {}) {
+        const history = await request("/api/history");
+        renderHistory(history.items);
+        const currentExists = history.items.some((item) => item.id === currentId);
+        if (currentId && !currentExists) clearViewer();
+        if (openLatest && currentId === null && history.items.length) {
+          openRecord(history.items[0].id);
+        }
+      }
+
+      function renderEgoHistory(items) {
+        egoHistoryList.replaceChildren();
+        egoHistoryCount.textContent = `${items.length} 条`;
+        if (!items.length) {
+          const empty = document.createElement("div");
+          empty.className = "history-empty";
+          empty.textContent = "暂无 EGO 分析记录。载入轨迹日志后会保存在这里。";
+          egoHistoryList.append(empty);
+          return;
+        }
+        items.forEach((item) => {
+          const article = document.createElement("article");
+          article.className = "history-item";
+          article.dataset.recordId = item.id;
+
+          const openButton = document.createElement("button");
+          openButton.type = "button";
+          openButton.className = "history-open";
+          openButton.title = "打开这条 EGO 分析记录";
+          const name = document.createElement("span");
+          name.className = "history-name";
+          name.textContent = item.sourceName;
+          const files = document.createElement("span");
+          files.className = "history-files";
+          files.textContent = `${item.summary.runCount} 次运行 · ${item.summary.waypointCount} 个路径点`;
+          const meta = document.createElement("span");
+          meta.className = "history-meta";
+          meta.textContent = `${item.summary.violationRunCount} 次异常 · ${item.summary.unreviewedCollisionCount} 个碰撞待复核 · ${formatTime(item.updatedAt)}`;
+          openButton.append(name, files, meta);
+          openButton.addEventListener("click", () => openEgoRecord(item.id));
+
+          const deleteButton = document.createElement("button");
+          deleteButton.type = "button";
+          deleteButton.className = "delete-button";
+          deleteButton.title = `删除 ${item.sourceName}`;
+          deleteButton.setAttribute("aria-label", `删除 ${item.sourceName}`);
+          deleteButton.textContent = "×";
+          deleteButton.addEventListener("click", async () => {
+            if (!window.confirm(`确定删除“${item.sourceName}”的 EGO 分析历史吗？`)) return;
+            try {
+              await request(`/api/ego/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+              if (currentMode === "ego" && currentId === item.id) clearViewer();
+              setEgoStatus("EGO 分析历史已删除。", "success");
+              await loadEgoHistory();
+            } catch (error) {
+              setEgoStatus(error.message, "error");
+            }
+          });
+          article.append(openButton, deleteButton);
+          egoHistoryList.append(article);
+        });
+        renderSelection();
+      }
+
+      async function loadEgoHistory({ openLatest = false } = {}) {
+        const history = await request("/api/ego/history");
+        renderEgoHistory(history.items);
+        const currentExists = history.items.some((item) => item.id === currentId);
+        if (currentMode === "ego" && currentId && !currentExists) clearViewer();
+        if (openLatest && currentMode === "ego" && currentId === null && history.items.length) {
+          openEgoRecord(history.items[0].id);
+        }
+      }
+
+      async function setMode(mode) {
+        currentMode = mode;
+        currentId = null;
+        sceneModePanel.hidden = mode !== "scene";
+        egoModePanel.hidden = mode !== "ego";
+        sceneModeTab.setAttribute("aria-selected", String(mode === "scene"));
+        egoModeTab.setAttribute("aria-selected", String(mode === "ego"));
+        clearViewer();
+        if (mode === "ego") {
+          viewerEmpty.querySelector("strong").textContent = "载入 EGO 轨迹日志";
+          viewerEmpty.querySelector("span").textContent = "Python 会按 jsonname 递归查找原始场景，再根据 map.name 加载地图并分析越线、滑坡、跌落和碰撞候选。";
+          await loadEgoHistory({ openLatest: true });
+        } else {
+          viewerEmpty.querySelector("strong").textContent = "载入一组场景数据";
+          viewerEmpty.querySelector("span").textContent = "从左侧拖入 JSON，地图可根据 map.name 自动匹配；也可以手动指定 XODR。处理过程和历史数据都保留在本机。";
+          await loadHistory({ openLatest: true });
+        }
+      }
+
+      function acceptsFile(file, extensions) {
+        const accepted = Array.isArray(extensions) ? extensions : [extensions];
+        return accepted.some((extension) =>
+          file?.name.toLowerCase().endsWith(extension)
+        );
+      }
+
+      async function showAutomaticMap(file) {
+        if (selectedXodrFile || selectedScenarioFile !== file) return;
+        try {
+          const scenario = JSON.parse(await file.text());
+          const mapName = scenario?.map?.name;
+          xodrName.textContent = typeof mapName === "string" && mapName.trim()
+            ? `自动匹配：${mapName.trim()}.xodr`
+            : "JSON 中缺少 map.name";
+        } catch {
+          xodrName.textContent = "等待有效的场景 JSON";
+        }
+      }
+
+      function selectXodrFile(file) {
+        selectedXodrFile = file || null;
+        xodrName.textContent = selectedXodrFile?.name || "也可由 JSON 自动匹配";
+        if (!selectedXodrFile && selectedScenarioFile) {
+          showAutomaticMap(selectedScenarioFile);
+        }
+      }
+
+      function selectScenarioFile(file) {
+        selectedScenarioFile = file || null;
+        scenarioName.textContent = selectedScenarioFile?.name || "尚未选择";
+        if (!selectedXodrFile) {
+          xodrName.textContent = selectedScenarioFile
+            ? "正在读取 map.name……"
+            : "也可由 JSON 自动匹配";
+          if (selectedScenarioFile) showAutomaticMap(selectedScenarioFile);
+        }
+      }
+
+      function selectEgoLogFile(file) {
+        selectedEgoLogFile = file || null;
+        egoLogName.textContent = selectedEgoLogFile?.name || "尚未选择";
+      }
+
+      function setupDropZone(zone, input, extensions, selectFile, reportStatus = setStatus) {
+        const accepted = Array.isArray(extensions) ? extensions : [extensions];
+        const acceptedLabel = accepted.map((extension) => extension.toUpperCase()).join(" / ");
+        ["dragenter", "dragover"].forEach((eventName) => {
+          zone.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            zone.classList.add("drag-active");
+          });
+        });
+        ["dragleave", "drop"].forEach((eventName) => {
+          zone.addEventListener(eventName, (event) => {
+            event.preventDefault();
+            zone.classList.remove("drag-active");
+          });
+        });
+        zone.addEventListener("drop", (event) => {
+          const file = Array.from(event.dataTransfer?.files || []).find((item) =>
+            acceptsFile(item, accepted)
+          );
+          if (!file) {
+            reportStatus(`请拖入 ${acceptedLabel} 文件。`, "error");
+            return;
+          }
+          selectFile(file);
+          reportStatus(`已选择 ${file.name}。`);
+        });
+        input.addEventListener("change", () => selectFile(input.files[0]));
+      }
+
+      setupDropZone(xodrDropZone, xodrInput, ".xodr", selectXodrFile);
+      setupDropZone(scenarioDropZone, scenarioInput, ".json", selectScenarioFile);
+      setupDropZone(
+        egoLogDropZone,
+        egoLogInput,
+        [".jsonl", ".json"],
+        selectEgoLogFile,
+        setEgoStatus
+      );
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const xodrFile = selectedXodrFile;
+        const scenarioFile = selectedScenarioFile;
+        if (!scenarioFile) {
+          setStatus("请选择或拖入场景 JSON 文件。", "error");
+          return;
+        }
+
+        importButton.disabled = true;
+        setStatus("正在解析新场景……");
+        setProgress(2, "正在读取所选文件");
+        try {
+          const [xodrText, scenarioText] = await Promise.all([
+            xodrFile ? xodrFile.text() : Promise.resolve(null),
+            scenarioFile.text(),
+          ]);
+          setProgress(3, "正在提交解析任务");
+          const importRequest = {
+            taskLabel: document.getElementById("task-label").value.trim(),
+            scenarioName: scenarioFile.name,
+            scenarioText,
+          };
+          if (xodrFile) {
+            importRequest.xodrName = xodrFile.name;
+            importRequest.xodrText = xodrText;
+          }
+          const created = await request("/api/import-jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(importRequest),
+          });
+          const imported = await waitForImportJob(created.jobId);
+          setProgress(100, "解析完成");
+          openRecord(imported.id);
+          await loadHistory();
+          setStatus(
+            `载入完成：${imported.summary.roadCount} 条道路，${imported.summary.npcCount} 个 NPC。`,
+            "success",
+          );
+        } catch (error) {
+          const currentProgress = progressTrack.getAttribute("aria-valuenow") || "0";
+          setProgress(currentProgress, "解析失败", "error");
+          setStatus(error.message, "error");
+        } finally {
+          importButton.disabled = false;
+        }
+      });
+
+      egoForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!selectedEgoLogFile) {
+          setEgoStatus("请选择或拖入 EGO 轨迹日志 JSONL / JSON。", "error");
+          return;
+        }
+        egoImportButton.disabled = true;
+        setEgoStatus("正在分析 EGO 轨迹……");
+        setEgoProgress(2, "正在读取轨迹日志");
+        try {
+          const logText = await selectedEgoLogFile.text();
+          setEgoProgress(3, "正在提交分析任务");
+          const created = await request("/api/ego/import-jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              logName: selectedEgoLogFile.name,
+              logText,
+            }),
+          });
+          const imported = await waitForImportJob(created.jobId, setEgoProgress);
+          setEgoProgress(100, "EGO 轨迹分析完成");
+          openEgoRecord(imported.id);
+          await loadEgoHistory();
+          setEgoStatus(
+            `分析完成：${imported.summary.runCount} 次运行，${imported.summary.violationRunCount} 次检出异常。`,
+            "success",
+          );
+        } catch (error) {
+          const currentProgress = egoProgressTrack.getAttribute("aria-valuenow") || "0";
+          setEgoProgress(currentProgress, "EGO 轨迹分析失败", "error");
+          setEgoStatus(error.message, "error");
+        } finally {
+          egoImportButton.disabled = false;
+        }
+      });
+
+      sceneModeTab.addEventListener("click", () => {
+        setMode("scene").catch((error) => setStatus(error.message, "error"));
+      });
+      egoModeTab.addEventListener("click", () => {
+        setMode("ego").catch((error) => setEgoStatus(error.message, "error"));
+      });
+
+      loadHistory({ openLatest: true }).catch((error) => setStatus(error.message, "error"));
+      loadEgoHistory().catch((error) => setEgoStatus(error.message, "error"));
+    })();
+  </script>
+</body>
+</html>
