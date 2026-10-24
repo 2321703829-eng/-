@@ -16,8 +16,9 @@ id_ed25519*
 **/.pytest_cache/
 **/.vscode/
 
-# Databases, datasets, and generated output stay local
+# Database backups, datasets, and generated output stay local
 *.sqlite*
+!完全版本/完全版本/openDriveMapEditor/testfucs/agent_trace_viewer/request_tests.sqlite3
 *.db
 *.db-*
 *.xodr

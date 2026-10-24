@@ -28,7 +28,7 @@ python main.py
 python testfucs/agent_trace_viewer/server.py --port 8730
 ```
 
-Trace 审核器地址为 `http://127.0.0.1:8730/`。审核器需要用户在本地准备请求测试数据库；可参考 `testfucs/test_data_store.py` 的数据库迁移和数据访问实现。本仓库不提供已审核的实验数据库，也不会在启动时自动恢复本地实验答案。
+Trace 审核器地址为 `http://127.0.0.1:8730/`。仓库包含 `openDriveMapEditor/testfucs/agent_trace_viewer/request_tests.sqlite3` 的一致性快照，保存请求、地图对齐信息、DSL/工具标准答案及审核记录。数据库迁移和数据访问实现见 `testfucs/test_data_store.py`。实验 trace 和地图不包含在数据库内，需另行提供。
 
 场景可视化在其自身目录启动：
 
@@ -45,6 +45,6 @@ python -m visualization.server
 
 `.env.example` 只包含占位符。按所用入口将配置复制到本地相应 `.env` 文件，例如真实道路实验读取 `openDriveMapEditor/testfucs/.env` 中的 `DEEPSEEK_API_KEY`。密钥由用户自行提供，不得提交。
 
-提交内容为代码、测试、提示词及说明文档。不包含地图与场景数据、请求及审核数据库、实验 trace 和结果、历史备份、虚拟环境或模拟器。原有本地文件不会因本次发布被删除。数据库和运行结果须由使用者自行保管。
+提交内容为代码、测试、提示词、说明文档及上述审核数据库快照。不包含地图与场景数据、实验 trace 和结果、历史备份、虚拟环境或模拟器。原有本地文件不会因本次发布被删除。运行后对数据库的修改需按需再次提交；数据库的历史备份仍由使用者自行保管。
 
 `done` 表示执行完成，不等于人工审核通过。当前编辑器保留原有宽度系数上下限及传播行为，Trace 中预测宽度与实际地图可能不同，应以具体实验的验收口径为准。
