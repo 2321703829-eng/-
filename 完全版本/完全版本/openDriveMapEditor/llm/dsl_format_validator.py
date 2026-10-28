@@ -1,3 +1,4 @@
+from llm.width_guardrails import width_combination_errors
 import json
 
 
@@ -23,6 +24,7 @@ def validate_dsl_format(agent, payload, road_info=None):
             continue
         if agent == "width":
             _validate_width_operation(path, operation, road_info or {}, errors)
+            errors.extend(f"{path}: {e}" for e in width_combination_errors(operation))
         elif agent == "slope":
             _validate_slope_operation(path, operation, errors)
         elif agent == "curve":

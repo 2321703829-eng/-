@@ -569,6 +569,7 @@ class PlannedCommandDispatchTest(unittest.TestCase):
                 )
             )
 
+    @patch.dict("handler.agent_dispatcher.XParser.roads", {"3": object()})
     def test_reference_output_is_not_passed_back_to_agent_planning(self):
         class FakeWidthAgent:
             def __init__(self):
@@ -718,6 +719,7 @@ class PlannedCommandDispatchTest(unittest.TestCase):
         )
         self.assertEqual(result["resolved_tool_calls"], resolved)
 
+    @patch.dict("handler.agent_dispatcher.XParser.roads", {"3": object(), "4": object()})
     def test_all_agent_planning_finishes_before_sequential_execution(self):
         dispatcher = AgentDispatcher()
         barrier = threading.Barrier(2)
@@ -760,7 +762,7 @@ class PlannedCommandDispatchTest(unittest.TestCase):
 
 
 class AgentToolPlanningTest(unittest.TestCase):
-    def test_width_invalid_plan_fails_after_one_llm_request(self):
+    def test_width_invalid_plan_fails_after_three_tool_only_requests(self):
         agent = WidthAgent.__new__(WidthAgent)
         agent.execution_chain = object()
         response = SimpleNamespace(
@@ -801,7 +803,9 @@ class AgentToolPlanningTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unsupported width tool"):
                 agent.plan_execution(dsl, road_info)
 
-        self.assertEqual(len(requests), 1)
+        self.assertEqual(len(requests), 3)
+        self.assertTrue(all(r["dsl"] == requests[0]["dsl"] for r in requests))
+        self.assertIn("tool_plan_feedback", json.loads(requests[-1]["roadInfo"]))
         self.assertEqual(set(requests[0]), {"dsl", "roadInfo"})
 
     def test_width_total_target_divides_delta_across_all_lanes(self):

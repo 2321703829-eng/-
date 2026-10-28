@@ -90,6 +90,30 @@ vm.runInContext(source + `
   const singleAlignedData = baseline([alignedStandard]);
   singleAlignedData.cases.case1.road_alignment = {match_status: 'matched', road_id: '0'};
   await expect(singleAligned, singleAlignedData, 'pass', 'pass');
+  // Both the old request-road answer and the real-road answer may coexist.
+  const mixedScopes = baseline([alignedStandard, alignedActual]);
+  mixedScopes.cases.case1.road_alignment = {match_status: 'matched', road_id: '5'};
+  const mixedTask = task([alignedActual]);
+  mixedTask.user_input = 'Modify Road 21';
+  await expect(mixedTask, mixedScopes, 'pass', 'pass');
+  const mixedSingle = clone(singleAligned);
+  mixedSingle.user_input = 'Modify Road 21';
+  const mixedSingleData = baseline([alignedStandard, step('slope', 'real', 'road_0')]);
+  mixedSingleData.cases.case1.road_alignment = {match_status: 'matched', road_id: '0'};
+  await expect(mixedSingle, mixedSingleData, 'pass', 'pass');
+  const wrongMixedRoad = clone(mixedTask);
+  wrongMixedRoad.steps[0] = step('slope', 'wrong', 'road_6');
+  await expect(wrongMixedRoad, mixedScopes, 'fail', 'fail');
+  const wrongRealValue = baseline([alignedStandard, clone(alignedActual)]);
+  wrongRealValue.cases.case1.road_alignment = {match_status: 'matched', road_id: '5'};
+  wrongRealValue.cases.case1.slope[1].dsl.operations[0].value = 9;
+  // A matching legacy answer cannot override a conflicting real-road answer.
+  await expect(mixedTask, wrongRealValue, 'fail', 'fail');
+  const genuineRoads = task([alignedStandard, alignedActual]);
+  genuineRoads.user_input = 'Modify Road 21 and Road 5';
+  await expect(genuineRoads, mixedScopes, 'pass', 'pass');
+  genuineRoads.steps.pop();
+  await expect(genuineRoads, mixedScopes, 'fail', 'fail');
   one.dslChecks = [{status: 'error'}];
   state.reviewByTask.set('test', {decision: 'fail', review_source: 'human'});
   await expect(one, data, 'pass', 'pass');
@@ -120,7 +144,37 @@ vm.runInContext(source + `
   noApproved.cases.case1.slope[0].tool_answers[0].review_status = 'draft';
   await expect(one, noApproved, 'pass', 'fail');
   const ambiguous = baseline([slope, slope]);
+  ambiguous.cases.case1.slope.forEach(s => s.tool_answers = clone(s.tool_answers));
+  await expect(one, ambiguous, 'pass', 'pass');
+  // Search every matching DSL, including when the first has no approved tools.
+  ambiguous.cases.case1.slope[0].tool_answers[0].review_status = 'draft';
+  await expect(one, ambiguous, 'pass', 'pass');
+  ambiguous.cases.case1.slope[0].tool_answers[0].review_status = 'approved';
+  ambiguous.cases.case1.slope[0].tool_answers[0].tool_calls[0].args.items[0].formula = '9';
+  await expect(one, ambiguous, 'pass', 'pass');
+  ambiguous.cases.case1.slope[1].tool_answers[0].tool_calls[0].args.items[0].formula = '8';
   await expect(one, ambiguous, 'pass', 'fail');
+  ambiguous.cases.case1.slope.forEach(s => s.tool_answers[0].review_status = 'draft');
+  await expect(one, ambiguous, 'pass', 'fail');
+  // Road aliases must preserve lane IDs and other string-valued DSL fields.
+  const laneActual = step('width', 'lane', 'road_5');
+  laneActual.llm_output_json.operations[0].lane_ids = ['lane_1'];
+  const laneOther = clone(laneActual);
+  laneOther.llm_output_json.operations[0].lane_ids = ['lane_-1'];
+  const laneData = baseline([laneOther, clone(laneActual)]);
+  laneData.cases.case1.road_alignment = {match_status: 'matched', road_id: '5'};
+  laneData.cases.case1.width[1].tool_answers[0].tool_calls[0].args.items[0].formula = '9';
+  const laneTask = task([laneActual]);
+  laneTask.user_input = 'Modify lane 1 on Road 21';
+  const laneContext = buildRoadComparisonContext(laneTask, laneData);
+  assert.equal(dslAnswersEqual(laneActual.llm_output_json, laneOther.llm_output_json, laneContext), false);
+  await expect(laneTask, laneData, 'pass', 'fail');
+  // A mapped answer with another matching candidate may satisfy single flow too.
+  const duplicateSingle = clone(mixedSingleData);
+  duplicateSingle.errorsByTask = new Map();
+  duplicateSingle.caseIdByTask = new Map([['test', 'case1']]);
+  duplicateSingle.cases.case1.slope.push(clone(duplicateSingle.cases.case1.slope[1]));
+  await expect(mixedSingle, duplicateSingle, 'pass', 'pass');
   const invalid = clone(one);
   invalid.steps[0].llm_output_json = 'not json';
   await expect(invalid, data, 'fail', 'fail');
@@ -203,12 +257,17 @@ vm.runInContext(source + `
   for (const [left, right] of [
     ['1+(2+3)', '(3+1)+2'], ['1e+2+.50', '0.5+100.0'],
     ['1+-2', '-2+1'], ['2**3+1', '1+2**3'],
-    ['max(2+1,4)', 'max(1+2,4)'], ['2+random(0.4,0.7)', 'random(0.40,0.70)+2.0']
+        ['max(2+1,4)', 'max(1+2,4)'], ['2+random(0.4,0.7)', 'random(0.40,0.70)+2.0'],
+        ['1+2', '3'],
+        ['-4.0489*random(0.4,0.7)', '-(4.0489*random(0.40,0.70))'],
+        ['4.0489*-random(0.4,0.7)', '-4.0489*random(0.4,0.7)']
   ]) assert.equal(normalizeToolFormulaForCompare(left), normalizeToolFormulaForCompare(right), left);
   for (const [left, right] of [
     ['1-2', '2-1'], ['1/(2+3)', '1/2+3'], ['1-(2+3)', '1-2+3'],
-    ['1+1+2', '1+2'], ['1+2', '3'], ['-2**2+1', '(-2)**2+1'],
+        ['1+1+2', '1+2'], ['-2**2+1', '(-2)**2+1'],
     ['2**3**2', '(2**3)**2'], ['2**-2', '-2**2'],
+        ['-4.0489*random(0.4,0.7)', '4.0489*random(0.4,0.7)'],
+        ['-4.0489*random(0.4,0.7)', '-4.0489*random(0.5,0.7)'],
     ['random(0.4,0.7)+1', 'random(0.7,0.4)+1'],
     ['random(0.4,0.7)+1', 'random(0.4,0.8)+1']
   ]) assert.notEqual(normalizeToolFormulaForCompare(left), normalizeToolFormulaForCompare(right), left);

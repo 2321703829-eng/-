@@ -28,6 +28,7 @@ from llm.agent_tools import (
     WIDTH_DSL_PROMPT,
 )
 from llm.dsl_format_validator import validate_dsl_format
+from llm.width_guardrails import WIDTH_RULES, CHECK_RULES, width_context, checker_errors, validate_formula, unrelated_repair_changes
 from utils import agent_trace
 
 load_dotenv(override=True)
@@ -182,7 +183,7 @@ class WidthAgent:
         parser = JsonOutputParser()
 
         system_prompt = SystemMessagePromptTemplate.from_template(
-            escape_langchain_template_text(WIDTH_DSL_PROMPT)
+            escape_langchain_template_text(WIDTH_DSL_PROMPT + WIDTH_RULES)
             + """\nPlease ensure to directly output JSON data, without including the ```json markers, and without any prefixes or suffixes."""
         )
 
@@ -202,12 +203,12 @@ class WidthAgent:
         parser = JsonOutputParser()
 
         system_prompt = SystemMessagePromptTemplate.from_template(
-            escape_langchain_template_text(WIDTH_DSL_CHECK_PROMPT)
+            escape_langchain_template_text(WIDTH_DSL_CHECK_PROMPT + WIDTH_RULES + CHECK_RULES)
             + """\nPlease ensure to directly output JSON data, without including the ```json markers, and without any prefixes or suffixes."""
         )
 
         human_prompt = HumanMessagePromptTemplate.from_template(
-            """user_instruction: {userInput}\nroad_data: {originalInfo}\ndsl_output: {dslOutput}"""
+            """user_instruction: {userInput}\nroad_data: {originalInfo}\ndsl_output: {dslOutput}\nreview_history: {reviewHistory}\nchecker_feedback: {checkerFeedback}"""
         )
 
         chat_prompt = ChatPromptTemplate.from_messages([system_prompt, human_prompt])
@@ -217,7 +218,7 @@ class WidthAgent:
 
     def init_execution_chain(self):
         system_prompt = SystemMessagePromptTemplate.from_template(
-            escape_langchain_template_text(WIDTH_TOOL_PLAN_PROMPT)
+            escape_langchain_template_text(WIDTH_TOOL_PLAN_PROMPT + WIDTH_RULES)
         )
         human_prompt = HumanMessagePromptTemplate.from_template(
             "validated_dsl: {dsl}\nroad_data: {roadInfo}"
@@ -240,10 +241,11 @@ class WidthAgent:
     def _build_extract_request(
         self, user_input, road_info, previous_dsl_output=None, previous_check_result=None
     ):
+        road_info = width_context(road_info)
         retry_instruction = ""
         if previous_check_result:
             retry_instruction = (
-                "Run a fresh DSL extraction from the original task description and road context. Treat the previous failed DSL output and check result only as diagnostic reference to avoid repeating the same extraction error. Do not patch the previous DSL, do not expand the user requirement, do not invent new road data, and output JSON only."
+                "Run a fresh DSL extraction from the original task description and road context. Treat the previous failed DSL output and check result only as diagnostic reference to avoid repeating the same extraction error. Preserve fields not implicated by concrete issues unless the original request proves another error; do not expand the user requirement, do not invent new road data, and output JSON only."
             )
         return {
             "userInput": user_input,
@@ -258,6 +260,7 @@ class WidthAgent:
         }
 
     def get_commands(self, user_input, road_info):
+        road_info = width_context(road_info)
         # print("widthAgent:", user_input)
         result = agent_trace.invoke_llm(
             self.chain,
@@ -277,11 +280,15 @@ class WidthAgent:
         )
         if self.enable_dsl_check:
             last_check_result = None
+            review_history = []
+            checker_feedback = ""
             for attempt in range(1, DSL_CHECK_MAX_ATTEMPTS + 1):
                 check_request = {
                     "userInput": user_input,
                     "originalInfo": road_info,
                     "dslOutput": json.dumps(result, ensure_ascii=False),
+                    "reviewHistory": json.dumps(review_history, ensure_ascii=False),
+                    "checkerFeedback": checker_feedback,
                 }
                 format_check_result = validate_dsl_format("width", result, road_info)
                 if format_check_result.get("passed") is not True:
@@ -331,6 +338,7 @@ class WidthAgent:
                     agent="width",
                     operation="width",
                 )
+                contract_errors = checker_errors(check_result)
                 self.print_dsl_check_result(attempt, check_result)
                 agent_trace.record_dsl_check(
                     agent="width",
@@ -341,8 +349,17 @@ class WidthAgent:
                     dsl_output_json=result,
                     check_request_json=check_request,
                     check_output_json=check_result,
-                    status="ok",
+                    status="error" if contract_errors else "ok",
                 )
+                review_history.append({"attempt": attempt, "dsl": result, "check": check_result})
+                if contract_errors:
+                    checker_feedback = "Invalid checker response: " + "; ".join(contract_errors) + ". Recheck the SAME DSL; do not treat these contract errors as extraction errors."
+                    if attempt == DSL_CHECK_MAX_ATTEMPTS:
+                        message = "Width checker response invalid: " + "; ".join(contract_errors)
+                        agent_trace.update_agent_step(status="error", error=message)
+                        raise ValueError(message)
+                    continue
+                checker_feedback = ""
                 last_check_result = check_result
                 if check_result.get("passed") is True:
                     break
@@ -356,6 +373,7 @@ class WidthAgent:
                     )
                     agent_trace.update_agent_step(status="error", error=message)
                     raise ValueError(message)
+                previous_result = result
                 result = agent_trace.invoke_llm(
                     self.chain,
                     self._build_extract_request(
@@ -366,6 +384,11 @@ class WidthAgent:
                     agent="width",
                     operation="width",
                 )
+                collateral = unrelated_repair_changes(previous_result, result, check_result["issues"])
+                if collateral:
+                    message = "Width DSL repair changed fields outside reported issues: " + ", ".join(collateral)
+                    agent_trace.update_agent_step(llm_output_json=result, status="error", error=message)
+                    raise ValueError(message)
                 agent_trace.update_agent_step(
                     llm_output_json=result,
                     status="running",
@@ -380,33 +403,30 @@ class WidthAgent:
         return result
 
     def plan_execution(self, dsl, road_info):
-        requires_tools = self._dsl_requires_tools(dsl)
-        if not requires_tools:
+        if not self._dsl_requires_tools(dsl):
             agent_trace.update_agent_step(tool_call_json=[])
             return []
-        request = {
-            "dsl": json.dumps(dsl, ensure_ascii=False),
-            "roadInfo": json.dumps(road_info, ensure_ascii=False),
-        }
-        response = agent_trace.invoke_llm(
-            self.execution_chain,
-            request,
-            request_kind="tool_plan",
-            attempt=1,
-            agent="width",
-            operation="width",
-        )
-        raw_calls = agent_trace.tool_calls_for_trace(response)
-        agent_trace.update_agent_step(tool_call_json=raw_calls)
-        try:
-            calls = normalize_width_plan_tool_calls(raw_calls)
-            if not calls:
-                raise ValueError("Width DSL operations require Width tool calls.")
-            self._validate_plan_targets(dsl, road_info, calls)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"Width tool planning failed: {exc}") from exc
-        agent_trace.update_agent_step(tool_call_json=calls)
-        return calls
+        road_info = width_context(road_info)
+        request = {"dsl": json.dumps(dsl, ensure_ascii=False),
+                   "roadInfo": json.dumps(road_info, ensure_ascii=False)}
+        for attempt in range(1, 4):
+            response = agent_trace.invoke_llm(self.execution_chain, request,
+                request_kind="tool_plan", attempt=attempt, agent="width", operation="width")
+            raw_calls = agent_trace.tool_calls_for_trace(response)
+            agent_trace.update_agent_step(tool_call_json=raw_calls)
+            try:
+                calls = normalize_width_plan_tool_calls(raw_calls)
+                self._validate_plan_targets(dsl, road_info, calls)
+            except (TypeError, ValueError, SyntaxError, KeyError, OverflowError) as exc:
+                agent_trace.update_agent_step(error=f"Width tool plan attempt {attempt}: {exc}", status="running")
+                if attempt == 3:
+                    raise ValueError(f"Width tool planning failed: {exc}") from exc
+                request = {"dsl": json.dumps(dsl, ensure_ascii=False), "roadInfo": json.dumps({
+                    **road_info, "tool_plan_feedback": str(exc), "previous_tool_calls": raw_calls,
+                    "retry_scope": "Repair only the tool plan. The validated DSL is fixed; cover every operation/road/lane and correct the formula sign and value."}, ensure_ascii=False)}
+                continue
+            agent_trace.update_agent_step(tool_call_json=calls, error="", status="ok")
+            return calls
 
     def resolve_execution_plan(self, dsl, road_info, raw_calls):
         calls = normalize_width_plan_tool_calls(raw_calls)
@@ -487,6 +507,8 @@ class WidthAgent:
         for item in items:
             if valid_lane_ids and not set(item["li"]).issubset(valid_lane_ids):
                 raise ValueError("Width tool li contains a lane outside road_data.")
+        for item in items:
+            validate_formula(item, dsl["operations"][item["operation_index"]], road_info)
         return items
 
     def _dsl_requires_tools(self, dsl):

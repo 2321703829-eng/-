@@ -1,5 +1,39 @@
 # AGENTS.md
 
+## Width guardrails update, 2026-10-27
+
+Latest user direction: run a NEW DeepSeek V3.2 single/multi 200+200 batch after
+prompt optimization. Lane selection remains a model task: the just-added local
+request-to-lane semantic rejection/automatic DSL-regeneration changes were
+withdrawn. Only reinforce lane selection in prompts; retain the earlier approved
+format, checker-contract and tool-formula guards. Do not claim guaranteed model
+accuracy or reuse merged results in the fresh batch.
+
+Later user correction: remove DSL-level refusal based on projected negative
+width (including the percentage reduction ceiling). Preserve requested DSL and
+tool deltas; actual scene limits remain in the editor. See the revision notes in
+WIDTH_GUARDRAILS_20261027.md. The user authorized rerunning the remaining 23 failed
+tasks and replacing ONLY their corresponding results inside the 107-case run.
+The original 200-case runs, request text and answer DB must remain unchanged.
+
+The user authorized scoped repairs for the 107 failed width tasks. For width,
+this section supersedes the older single-shot tool-planning and fresh-extraction
+retry guidance below. Preserve model-generated DSL and width_apply tools.
+
+- Shared rules and deterministic facts live in llm/width_guardrails.py.
+- A malformed/contradictory checker response retries the checker on the SAME DSL;
+  it must not be treated as extraction feedback. Record the review history.
+- A genuine DSL repair must cite specific issue fields; reject collateral changes,
+  never merge or manufacture a DSL locally.
+- Validate formula sign/value/range and exact target coverage. Retry width tool
+  planning up to 3 attempts without regenerating the validated DSL. The single
+  agent may make supplemental tool-only calls; report those calls explicitly.
+- Numeric constant-only tool formulas may compare by safe arithmetic equivalence
+  in the viewer; random formulas remain structural and must not be sampled.
+- Connection handling is unchanged at the user's request. No experiment rerun or
+  database-answer replacement is implied by code edits; follow current user scope.
+- Details and rollback: WIDTH_GUARDRAILS_20261027.md.
+
 本文件是给后续代码 Agent 使用的项目协作说明。执行任务前先阅读本文件，再结合当前用户请求和相关源码确认事实。
 
 ## 项目概览
@@ -134,7 +168,8 @@ trace 实验入口：
 - Viewer 与道路修改执行链分离。`llm/`、`handler/` 和 `editor/` 不得导入 Viewer；执行链只产出 trace，Viewer 只消费 trace 并维护人工审核答案。
 - `case_reviews` 按 `case_id + run_id + task_id` 唯一保存每次运行的任务审核；`review_source` 区分 `human` 与 `auto`，自动审核不得覆盖已有人工审核。
 - 自动审核只有在任务状态完成、全部 DSL 输出匹配且每个对应工具调用都匹配至少一个 `approved` 工具答案时，才能把任务判为 `pass`；复合任务中的所有子任务都必须通过。
-- 实际 DSL 或工具调用缺失、格式错误或与标准答案不匹配时判为 `fail`；DSL 无法唯一关联、缺少 DSL 标准答案或缺少 `approved` 工具答案时判为 `question`，不得判为 `pass`。
+- 一键审核允许当前 DSL 对应多个标准答案：按当前道路映射规范化后，从所有匹配 DSL 的 `approved` 工具答案中比较，任意一个匹配即可通过该子任务；多个候选本身不构成失败。不同车道、动作、幅度等字段仍须匹配，不得混入不匹配 DSL 下的工具答案。
+- 实际 DSL 或工具调用缺失、格式错误或与标准答案不匹配时判为 `fail`；缺少 DSL 标准答案时判为 `question`。工具审核找不到匹配 DSL、缺少 `approved` 工具答案或全部候选不匹配时判为 `fail`，不得自动通过。
 - 自动审核产生的 `pass`、`question`、`fail` 都写入 `case_reviews`，并使用 `review_source=auto`；已有人工审核继续优先且不得被自动结果覆盖。
 - Viewer 的一键审核应一次批量读取当前任务涉及的 DSL/工具答案，在浏览器本地完成全部比较后再用一个事务批量写入审核结果；不得在任务循环中逐条请求标准答案或逐条保存自动审核。
 - `viewer_service.bat` 只能通过 `127.0.0.1` 健康检查和带 `X-Viewer-Control` 请求头的 `/api/shutdown` 控制自身服务；不得使用 PowerShell 执行策略绕过、进程枚举、PID 文件或强制结束进程。

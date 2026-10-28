@@ -23,6 +23,7 @@ from llm.curve_agent import CurveAgent, normalize_curve_tool_calls
 from llm.dsl_format_validator import validate_dsl_format
 from llm.slope_agent import SlopeAgent, normalize_slope_plan_tool_calls
 from llm.width_agent import WidthAgent, normalize_width_plan_tool_calls
+from llm.width_guardrails import WIDTH_RULES, width_context
 from utils import agent_trace
 
 load_dotenv(override=True)
@@ -41,7 +42,7 @@ class SingleAgent:
         combined_prompt = "\n\n".join(
             [
                 "# Width DSL extraction prompt",
-                WIDTH_DSL_PROMPT,
+                WIDTH_DSL_PROMPT + WIDTH_RULES,
                 "# Slope DSL extraction prompt",
                 SLOPE_DSL_PROMPT,
                 "# Curve DSL extraction prompt",
@@ -53,6 +54,8 @@ class SingleAgent:
                 "# Curve tool planning prompt",
                 CURVE_TOOL_PLAN_PROMPT,
                 SINGLE_DSL_TOOL_WRAPPER_PROMPT,
+                "# Final width-only reminders before producing the unified output",
+                WIDTH_RULES,
             ]
         )
 
@@ -63,20 +66,27 @@ class SingleAgent:
         human_prompt = HumanMessagePromptTemplate.from_template(
             "user_instruction: {userInput}\n"
             "road_data: {roadData}\n"
+            "For width lane targets, re-read that road's lane_position_table and the complete lane_ids order. Rightmost is the last entry, leftmost is the first. Use the chosen ID consistently in DSL and tools.\n"
             "Return all DSL operations and tool plans in the unified JSON structure."
         )
         chat_prompt = ChatPromptTemplate.from_messages([system_prompt, human_prompt])
         return chat_prompt | self.model | parser
 
     def _build_extract_request(self, user_input, road_context):
-        road_context = road_context or {}
+        road_context = dict(road_context or {})
+        if isinstance(road_context.get("roads"), list):
+            road_context["roads"] = [dict(road, width=width_context(road["width"]))
+                if isinstance(road.get("width"), dict) else dict(road) for road in road_context["roads"]]
         return {
             "userInput": user_input,
             "roadData": json.dumps(road_context, ensure_ascii=False),
         }
 
     def get_commands(self, user_input, road_context=None):
-        road_context = road_context or {}
+        road_context = dict(road_context or {})
+        if isinstance(road_context.get("roads"), list):
+            road_context["roads"] = [dict(road, width=width_context(road["width"]))
+                if isinstance(road.get("width"), dict) else dict(road) for road in road_context["roads"]]
         try:
             raw_result = agent_trace.invoke_llm(
                 self.chain,
@@ -183,6 +193,8 @@ class SingleAgent:
             execution_plans.append(
                 self._prepare_execution_plan(agent, target_dsl, road_info, calls)
             )
+            # A tool-only repair must also be visible in the returned/traced plan.
+            plans_by_target[key]["tool_calls"] = execution_plans[-1]["tool_calls"]
 
         return {
             "dsl": {"operations": operations},
@@ -192,11 +204,18 @@ class SingleAgent:
 
     def _prepare_execution_plan(self, agent, dsl, road_info, calls):
         if agent == "width":
-            normalized = normalize_width_plan_tool_calls(calls)
-            self.width_validator._validate_plan_targets(dsl, road_info, normalized)
-            resolved = self.width_validator.resolve_execution_plan(
-                dsl, road_info, normalized
-            )
+            try:
+                normalized = normalize_width_plan_tool_calls(calls)
+                self.width_validator._validate_plan_targets(dsl, road_info, normalized)
+            except (TypeError, ValueError, SyntaxError, KeyError, OverflowError) as exc:
+                if not hasattr(self, "model"):
+                    raise
+                # The single model has already emitted its DSL. Replan only tools
+                # for this validated target; do not repeat extraction or self-check.
+                planner = WidthAgent(self.model, enable_dsl_check=False)
+                normalized = planner.plan_execution(dsl, dict(road_info,
+                    initial_tool_plan_feedback=str(exc), previous_tool_calls=calls))
+            resolved = self.width_validator.resolve_execution_plan(dsl, road_info, normalized)
             return self._execution_plan(
                 agent, dsl, road_info, normalized, resolved
             )

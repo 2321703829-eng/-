@@ -45,6 +45,7 @@ from handler.handlerWidth import handlerW
 from llm.curve_agent import normalize_curve_tool_calls
 from llm.slope_agent import normalize_slope_plan_tool_calls, normalize_slope_tool_calls
 from llm.width_agent import normalize_width_plan_tool_calls, normalize_width_tool_calls
+from llm.width_guardrails import width_context
 from utils import agent_road_context, agent_trace
 from utils.lambdas import getData
 from xodrs.xodrParser import XParser
@@ -422,6 +423,8 @@ class AgentDispatcher:
                 raise ValueError("Width agent is not configured.")
             road_id = self._manager_road_id(command)
             road_info = self._build_width_road_info(road_id)
+            if getattr(self, "original_user_instruction", None):
+                road_info = dict(road_info, original_user_instruction=self.original_user_instruction)
             dsl = self._ensure_payload_road_id(
                 self.width_agent.get_commands(description, road_info), road_id
             )
@@ -516,6 +519,8 @@ class AgentDispatcher:
         road_id = str(command.get("road_id", "")).replace("road_", "")
         if not self._is_concrete_road_id(road_id):
             raise ValueError("Manager command requires a concrete road_id.")
+        if not _use_manual_road_context() and road_id not in XParser.roads:
+            raise ValueError(f"Manager road_{road_id} is absent from the loaded map")
         return road_id
 
     def _ensure_payload_road_id(self, payload, road_id):
@@ -564,7 +569,7 @@ class AgentDispatcher:
 
     def _build_width_road_info(self, road_id):
         if _use_manual_road_context():
-            return agent_road_context.get_manual_width_road_info(road_id)
+            return width_context(agent_road_context.get_manual_width_road_info(road_id))
         """为 width Agent 构造道路上下文信息，例如车道 id 与平均宽度。"""
         road = XParser.roads[str(road_id)]
         lane_ids = sorted(
@@ -581,11 +586,11 @@ class AgentDispatcher:
                 self._get_lane_avg_width(road, str(lane_id)), 4
             )
 
-        return {
+        return width_context({
             "road_id": f"road_{road_id}",
             "lane_ids": lane_ids,
             "lane_avg_width": lane_avg_width,
-        }
+        })
 
     def _build_slope_road_info(self, road_id):
 

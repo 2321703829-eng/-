@@ -19,6 +19,7 @@ from llm.agent_tools import escape_langchain_template_text, get_model, MANAGER_P
 from llm.curve_agent import CurveAgent
 from llm.slope_agent import SlopeAgent
 from llm.width_agent import WidthAgent
+from llm.width_guardrails import road_ids
 from utils import agent_trace
 
 load_dotenv(override=True)
@@ -67,12 +68,12 @@ class ManagerAgent:
         # )
 
         system_prompt = SystemMessagePromptTemplate.from_template(
-            escape_langchain_template_text(MANAGER_PROMPT)
+            escape_langchain_template_text(MANAGER_PROMPT + "\nFor each executable subtask return exactly road_id, type_name, description. road_id must be road_N from the original explicit road reference. Preserve the original edit meaning, units, degree and lane target. Do not replace signed lane IDs with road IDs. Negative lane IDs are legal OpenDRIVE IDs; never reject a task merely for a negative lane ID. Delegate width validity and boundaries to the width agent rather than inventing restrictions at task splitting. Preserve a bit/a little as slight, and greatly/significantly as significant.\n")
             + """Please strictly adhere to the following JSON output specifications (return only JSON, no extra characters): {format_instructions}"""
         )
 
         human_prompt = HumanMessagePromptTemplate.from_template(
-            """Based on the user's task description, split the task as needed and return JSON. Task description: {input}"""
+            """Based on the user's task description, split the task as needed and return JSON. Executable command schema is EXACTLY {{"road_id":"road_N","type_name":"width|slope|curve","description":"faithful subtask description"}}. Never add parameters, degree, lane_sides, tools, or any other keys. Degree and lane details belong in description. Example: moderately narrow the far right lane on roadway 0 => {{"commands":[{{"road_id":"road_0","type_name":"width","description":"Moderately narrow the far right lane on roadway 0."}}]}}. Task description: {input}"""
         )
 
         chat_prompt = ChatPromptTemplate.from_messages(
@@ -96,6 +97,12 @@ class ManagerAgent:
             operation="manager",
         )
         commands = self._attach_road_ids(response["commands"])
+        self.dispatcher.original_user_instruction = commandDescription
+        original_roads = set(road_ids(commandDescription))
+        for command in commands:
+            if command.get("type_name") in {"width", "slope", "curve"} and original_roads:
+                if command["road_id"].removeprefix("road_") not in original_roads:
+                    raise ValueError("Manager invented a road absent from the original request")
         response = dict(response, commands=commands)
         agent_trace.record_agent_step(
             agent="manager",
@@ -115,30 +122,27 @@ class ManagerAgent:
         for command in commands:
             command = dict(command)
             if command.get("type_name") in {"width", "slope", "curve"}:
-                command["road_id"] = self._extract_unique_road_id(
-                    command.get("description", "")
-                )
+                explicit = command.get("road_id")
+                described = road_ids(command.get("description", ""))
+                if explicit is not None:
+                    if not isinstance(explicit, str) or not re.fullmatch(r"road_[0-9]+", explicit):
+                        raise ValueError("Manager road_id must be a concrete road_N string")
+                    if described and described != [explicit.removeprefix("road_")]:
+                        raise ValueError("Manager structured road_id conflicts with description")
+                    command["road_id"] = explicit
+                else:
+                    command["road_id"] = self._extract_unique_road_id(command.get("description", ""))
             enriched.append(command)
         return enriched
 
     def _extract_unique_road_id(self, description):
-        text = str(description)
-        road_ids = []
-        patterns = (
-            r"\broad(?:\s*no\.?)?[_\s#-]*(\d+)\b",
-            r"(\d+)\s*号\s*(?:道路|路)",
-            r"(?:道路|路)\s*(\d+)",
-        )
-        for pattern in patterns:
-            for road_id in re.findall(pattern, text, flags=re.IGNORECASE):
-                if road_id not in road_ids:
-                    road_ids.append(road_id)
-        if len(road_ids) != 1:
+        ids = road_ids(description)
+        if len(ids) != 1:
             raise ValueError(
                 "Executable Manager command must describe exactly one road id: "
                 f"{description}"
             )
-        return f"road_{road_ids[0]}"
+        return f"road_{ids[0]}"
 
     def dispatch_task(self, commands):
         results = self.dispatcher.dispatch_split_commands(commands)
